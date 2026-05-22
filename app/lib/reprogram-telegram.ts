@@ -30,7 +30,7 @@ export function formatReprogramHtml(
 
   function pushSection(title: string, body: string) {
     const t = `<b>${escapeHtmlTelegramSafe(title)}</b>`;
-    const b = escapeHtmlTelegramSafe(body.trim() || "—").replace(/\n/g, "<br/>");
+    const b = escapeHtmlTelegramSafe(body.trim() || "—").replace(/\n/g, "<br>");
     const piece = `\n\n${t}\n${b}`;
 
     if ((block + piece).length > 3700) {
