@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { burstNeonConfetti } from "@/app/lib/neonConfetti";
 
@@ -67,7 +68,7 @@ function streakFromStart(keys: Set<string>, dayKeys: string[]): number {
 const badgeGlow = {
   cyan: "border-cyan-500/35 bg-cyan-500/[0.08] shadow-[0_0_28px_-8px_rgba(34,211,238,0.45)]",
   fuchsia:
-    "border-fuchsia-500/35 bg-fuchsia-500/[0.08] shadow-[0_0_28px_-8px_rgba(217,70,239,0.4)]",
+    "border-fuchsia-500/35 bg-fuchsia-500/8 shadow-[0_0_28px_-8px_rgba(217,70,239,0.4)]",
   pink: "border-pink-500/35 bg-pink-500/[0.08] shadow-[0_0_28px_-8px_rgba(236,72,153,0.35)]",
   amber:
     "border-amber-400/35 bg-amber-400/[0.07] shadow-[0_0_28px_-8px_rgba(251,191,36,0.35)]",
@@ -173,8 +174,8 @@ export function ChallengeCalendar() {
       <div className="mx-auto max-w-7xl space-y-8">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-cyan-500/15 pb-5">
           <div>
-            <h1 className="font-orbitron bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
-              Flow
+            <h1 className="font-orbitron max-w-xl bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-balance text-xl font-bold leading-tight tracking-tight text-transparent sm:text-2xl md:text-3xl">
+              Challenge Deepfocus &amp; No Scroll
             </h1>
             <p className="mt-1 font-mono text-xs text-zinc-500 tabular-nums">
               <time dateTime={dayKeys[0]}>{days[0].toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, ".")}</time>
@@ -185,9 +186,17 @@ export function ChallengeCalendar() {
               <span className="text-zinc-600"> · {TOTAL_DAYS}d</span>
             </p>
           </div>
-          <span className="font-orbitron text-[10px] font-semibold uppercase tracking-[0.4em] text-cyan-400/75">
-            online
-          </span>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/reprogrammation"
+              className="rounded-full border border-fuchsia-500/30 bg-fuchsia-500/8 px-3 py-1.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-fuchsia-200 transition-colors hover:border-cyan-400/50 hover:text-cyan-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+            >
+              reprogrammation
+            </Link>
+            <span className="font-orbitron text-[10px] font-semibold uppercase tracking-[0.4em] text-cyan-400/75">
+              online
+            </span>
+          </div>
         </header>
 
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
@@ -249,11 +258,11 @@ export function ChallengeCalendar() {
                       aria-pressed={isOn}
                       aria-label={`${weekday} ${dayNum} ${monthLong}${isOn ? ", complété" : ", à compléter"}`}
                       className={[
-                        "flex aspect-square max-h-[4.75rem] w-full min-h-16 items-center justify-center rounded-xl border transition-[box-shadow,border-color,background-color,color] motion-safe:duration-200 sm:max-h-none sm:min-h-20 sm:aspect-auto sm:rounded-2xl sm:py-6",
+                        "flex aspect-square max-h-19 w-full min-h-16 items-center justify-center rounded-xl border transition-[box-shadow,border-color,background-color,color] motion-safe:duration-200 sm:max-h-none sm:min-h-20 sm:aspect-auto sm:rounded-2xl sm:py-6",
                         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
                         isOn
-                          ? "border-cyan-400/70 bg-cyan-500/15 text-cyan-100 shadow-[0_0_20px_-4px_rgba(34,211,238,0.5)] motion-safe:active:translate-y-[1px]"
-                          : "border-zinc-700/80 bg-zinc-950/35 text-zinc-100 hover:border-fuchsia-500/45 hover:bg-zinc-900/55 motion-safe:active:translate-y-[1px]",
+                          ? "border-cyan-400/70 bg-cyan-500/15 text-cyan-100 shadow-[0_0_20px_-4px_rgba(34,211,238,0.5)] motion-safe:active:translate-y-px"
+                          : "border-zinc-700/80 bg-zinc-950/35 text-zinc-100 hover:border-fuchsia-500/45 hover:bg-zinc-900/55 motion-safe:active:translate-y-px",
                       ].join(" ")}
                     >
                       <span className="font-orbitron text-xl tabular-nums tracking-tight sm:text-2xl md:text-3xl">
@@ -287,7 +296,7 @@ export function ChallengeCalendar() {
                   aria-valuemax={100}
                   aria-label={`Niveau ${mounted ? displayLevel : "…"}, progression ${mounted ? percent : 0}%`}
                 >
-                  <div className="relative grid size-[3.5rem] shrink-0 place-items-center xl:size-16">
+                  <div className="relative grid size-14 shrink-0 place-items-center xl:size-16">
                     <svg className="size-full -rotate-90" viewBox="0 0 36 36">
                       <circle
                         cx="18"
@@ -357,7 +366,7 @@ export function ChallengeCalendar() {
                 className="mt-5 rounded-2xl border border-zinc-700/50 bg-zinc-950/55 p-4 backdrop-blur-sm"
               >
                 <p className="font-orbitron text-[9px] font-semibold uppercase tracking-[0.32em] text-fuchsia-400/85">
-                  protocol
+                  règles
                 </p>
                 <ul className="mt-3 space-y-3 text-xs leading-snug text-zinc-400">
                   <li className="flex gap-2">
@@ -377,6 +386,19 @@ export function ChallengeCalendar() {
                     <span>
                       <span className="font-semibold text-zinc-200">Pas de scroll</span> avant{" "}
                       <span className="tabular-nums text-cyan-200/95">18&nbsp;h</span>.
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="mt-1.5 shrink-0 font-orbitron text-[9px] text-cyan-500/90">
+                      03
+                    </span>
+                    <span>
+                      <span className="font-semibold text-zinc-200">
+                        Faire la reprogrammation
+                      </span>{" "}
+                      <span className="text-zinc-300">
+                        tous les matins avec mon café.
+                      </span>
                     </span>
                   </li>
                 </ul>

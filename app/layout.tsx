@@ -19,9 +19,9 @@ const orbitron = Orbitron({
 });
 
 export const metadata: Metadata = {
-  title: "Flow Challenge — 31 jours",
+  title: "Challenge Deepfocus & No Scroll — 31 jours",
   description:
-    "Calendrier de challenge gamifié : coche chaque jour du 18 mai au 17 juin.",
+    "Calendrier de challenge gamifié (deep focus & no scroll) : coche chaque jour du 18 mai au 17 juin.",
 };
 
 export default function RootLayout({
