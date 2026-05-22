@@ -14,11 +14,9 @@ export async function saveReprogramForParisDay(
 ): Promise<boolean> {
   const redis = createRedis();
   if (!redis) return false;
-  await redis.set(
-    reprogramRedisKeyParisDate(parisYYYYMMDD),
-    JSON.stringify(entry),
-    { ex: 60 * 60 * 24 * 120 },
-  );
+  await redis.set(reprogramRedisKeyParisDate(parisYYYYMMDD), entry, {
+    ex: 60 * 60 * 24 * 120,
+  });
   return true;
 }
 
@@ -27,14 +25,21 @@ export async function loadReprogramForParisDay(
 ): Promise<ReprogrammationEntry | null> {
   const redis = createRedis();
   if (!redis) return null;
-  const raw = await redis.get<string>(reprogramRedisKeyParisDate(parisYYYYMMDD));
-  if (!raw || typeof raw !== "string") return null;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return coerceReprogrammationEntry(parsed);
+    /** Upstash peut renvoyer une string JSON ou l’objet déjà parsé. */
+    const raw: unknown = await redis.get(reprogramRedisKeyParisDate(parisYYYYMMDD));
+    if (raw == null) return null;
+    if (typeof raw === "string") {
+      const parsed = JSON.parse(raw) as unknown;
+      return coerceReprogrammationEntry(parsed);
+    }
+    if (typeof raw === "object") {
+      return coerceReprogrammationEntry(raw);
+    }
   } catch {
     return null;
   }
+  return null;
 }
 
 /** `true` si la clé n'existait pas (premier passage). */
