@@ -1,30 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  fetchChallengeChecksFromCloud,
+  persistChallengeChecksToCloud,
+} from "@/app/challenge-calendar/actions";
+import {
+  buildChallengeDates,
+  CHALLENGE_LOCAL_STORAGE_KEY,
+  formatChallengeDayKey,
+  getAllChallengeDayKeys,
+  TOTAL_DAYS,
+} from "@/app/lib/challenge-calendar-days";
 import { burstNeonConfetti } from "@/app/lib/neonConfetti";
-
-const STORAGE_KEY = "flowchallenge-2026-05-18";
-const START = new Date(2026, 4, 18);
-const TOTAL_DAYS = 31;
-
-function formatDateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function buildDays(): Date[] {
-  return Array.from({ length: TOTAL_DAYS }, (_, i) => {
-    const d = new Date(START);
-    d.setDate(START.getDate() + i);
-    return d;
-  });
-}
-
-/** Dimanche → samedi (aligné avec getDay() : 0 = dimanche) */
-const WEEKDAY_LETTERS = ["d", "l", "m", "m", "j", "v", "s"] as const;
 
 type CalendarSlot = { kind: "empty" } | { kind: "day"; date: Date };
 
@@ -39,10 +28,10 @@ function buildWeekGrid(days: Date[]): CalendarSlot[] {
   return out;
 }
 
-function loadChecked(): Set<string> {
+function loadCheckedLocal(): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(CHALLENGE_LOCAL_STORAGE_KEY);
     if (!raw) return new Set();
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return new Set();
@@ -52,8 +41,11 @@ function loadChecked(): Set<string> {
   }
 }
 
-function saveChecked(next: Set<string>) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...next]));
+function saveCheckedLocal(next: Set<string>) {
+  window.localStorage.setItem(
+    CHALLENGE_LOCAL_STORAGE_KEY,
+    JSON.stringify([...next]),
+  );
 }
 
 function streakFromStart(keys: Set<string>, dayKeys: string[]): number {
@@ -64,6 +56,9 @@ function streakFromStart(keys: Set<string>, dayKeys: string[]): number {
   }
   return n;
 }
+
+/** Dimanche → samedi (aligné avec getDay() : 0 = dimanche) */
+const WEEKDAY_LETTERS = ["d", "l", "m", "m", "j", "v", "s"] as const;
 
 const badgeGlow = {
   cyan: "border-cyan-500/35 bg-cyan-500/[0.08] shadow-[0_0_28px_-8px_rgba(34,211,238,0.45)]",
@@ -122,29 +117,82 @@ function StatBadge({
 }
 
 export function ChallengeCalendar() {
-  const days = useMemo(() => buildDays(), []);
-  const dayKeys = useMemo(() => days.map(formatDateKey), [days]);
+  const days = useMemo(() => buildChallengeDates(), []);
+  const dayKeys = useMemo(() => getAllChallengeDayKeys(), []);
   const weekGrid = useMemo(() => buildWeekGrid(days), [days]);
 
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [mounted, setMounted] = useState(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudSyncEnabledRef = useRef(false);
 
   useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      setChecked(loadChecked());
+    let cancelled = false;
+
+    (async () => {
+      const local = loadCheckedLocal();
+      const { keys: remote, ok, cloudConfigured } =
+        await fetchChallengeChecksFromCloud();
+
+      if (cancelled) return;
+
+      cloudSyncEnabledRef.current = cloudConfigured;
+
+      const allowed = new Set(dayKeys);
+      const merged = new Set<string>();
+      for (const k of local) {
+        if (allowed.has(k)) merged.add(k);
+      }
+      if (ok) {
+        for (const k of remote) {
+          if (allowed.has(k)) merged.add(k);
+        }
+      }
+
+      setChecked(merged);
+      saveCheckedLocal(merged);
+
+      if (cloudConfigured && ok) {
+        await persistChallengeChecksToCloud([...merged]);
+      }
+
       setMounted(true);
-    });
-    return () => cancelAnimationFrame(id);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dayKeys]);
+
+  const scheduleCloudPersist = useCallback((next: Set<string>) => {
+    if (!cloudSyncEnabledRef.current) return;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      void persistChallengeChecksToCloud([...next]);
+    }, 550);
   }, []);
 
-  const toggle = useCallback((key: string) => {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      saveChecked(next);
-      return next;
-    });
+  const toggle = useCallback(
+    (key: string) => {
+      setChecked((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        saveCheckedLocal(next);
+        scheduleCloudPersist(next);
+        return next;
+      });
+    },
+    [scheduleCloudPersist],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
   }, []);
 
   const doneCount = checked.size;
@@ -184,6 +232,9 @@ export function ChallengeCalendar() {
                 {days[TOTAL_DAYS - 1].toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, ".")}
               </time>
               <span className="text-zinc-600"> · {TOTAL_DAYS}d</span>
+              <span className="block text-[10px] text-zinc-600">
+                ta progression suit sur tous tes appareils (nuage Redis)
+              </span>
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -201,13 +252,10 @@ export function ChallengeCalendar() {
 
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
           <div className="min-w-0 flex-1 space-y-1 sm:space-y-1.5">
-            <div
-              className="grid grid-cols-7 gap-2 sm:gap-3"
-              aria-hidden
-            >
+            <div className="grid grid-cols-7 gap-2 sm:gap-3" aria-hidden>
               {WEEKDAY_LETTERS.map((letter, i) => (
                 <div
-                  key={`w-${i}`}
+                  key={`w-${letter}-${i}`}
                   className="select-none pb-0.5 text-center font-orbitron text-[10px] font-semibold tabular-nums tracking-wide text-zinc-500 sm:text-[11px]"
                 >
                   {letter}
@@ -230,7 +278,7 @@ export function ChallengeCalendar() {
                 }
 
                 const d = slot.date;
-                const key = formatDateKey(d);
+                const key = formatChallengeDayKey(d);
                 const isOn = checked.has(key);
                 const weekday = d.toLocaleDateString("fr-FR", {
                   weekday: "long",
@@ -258,7 +306,7 @@ export function ChallengeCalendar() {
                       aria-pressed={isOn}
                       aria-label={`${weekday} ${dayNum} ${monthLong}${isOn ? ", complété" : ", à compléter"}`}
                       className={[
-                        "flex aspect-square max-h-19 w-full min-h-16 items-center justify-center rounded-xl border transition-[box-shadow,border-color,background-color,color] motion-safe:duration-200 sm:max-h-none sm:min-h-20 sm:aspect-auto sm:rounded-2xl sm:py-6",
+                        "flex aspect-square w-full min-h-16 max-h-28 items-center justify-center rounded-xl border transition-[box-shadow,border-color,background-color,color] motion-safe:duration-200 sm:max-h-none sm:min-h-20 sm:aspect-auto sm:rounded-2xl sm:py-6",
                         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
                         isOn
                           ? "border-cyan-400/70 bg-cyan-500/15 text-cyan-100 shadow-[0_0_20px_-4px_rgba(34,211,238,0.5)] motion-safe:active:translate-y-px"
@@ -321,7 +369,9 @@ export function ChallengeCalendar() {
                       />
                     </svg>
                     <span className="pointer-events-none absolute flex flex-col items-center leading-none">
-                      <span className="font-orbitron text-[8px] text-pink-300/90">Lv</span>
+                      <span className="font-orbitron text-[8px] text-pink-300/90">
+                        Lv
+                      </span>
                       <span className="font-orbitron text-base font-bold tabular-nums text-pink-100">
                         {mounted ? displayLevel : "?"}
                       </span>
@@ -350,7 +400,11 @@ export function ChallengeCalendar() {
                 <StatBadge
                   hue="amber"
                   tag="clear"
-                  value={mounted ? `${String(doneCount).padStart(2, "0")}/${TOTAL_DAYS}` : "··/31"}
+                  value={
+                    mounted
+                      ? `${String(doneCount).padStart(2, "0")}/${TOTAL_DAYS}`
+                      : "··/31"
+                  }
                 />
 
                 <StatBadge
@@ -374,9 +428,15 @@ export function ChallengeCalendar() {
                       01
                     </span>
                     <span>
-                      <span className="font-semibold text-zinc-200">1 deep focus d’1&nbsp;h</span>{" "}
-                      <span className="text-zinc-300">tous les jours</span>, sauf le{" "}
-                      <span className="font-medium text-fuchsia-300/90">samedi</span>.
+                      <span className="font-semibold text-zinc-200">
+                        1 deep focus d’1&nbsp;h
+                      </span>{" "}
+                      <span className="text-zinc-300">tous les jours</span>,
+                      sauf le{" "}
+                      <span className="font-medium text-fuchsia-300/90">
+                        samedi
+                      </span>
+                      .
                     </span>
                   </li>
                   <li className="flex gap-2">
@@ -384,8 +444,14 @@ export function ChallengeCalendar() {
                       02
                     </span>
                     <span>
-                      <span className="font-semibold text-zinc-200">Pas de scroll</span> avant{" "}
-                      <span className="tabular-nums text-cyan-200/95">18&nbsp;h</span>.
+                      <span className="font-semibold text-zinc-200">
+                        Pas de scroll
+                      </span>{" "}
+                      avant{" "}
+                      <span className="tabular-nums text-cyan-200/95">
+                        18&nbsp;h
+                      </span>
+                      .
                     </span>
                   </li>
                   <li className="flex gap-2">
