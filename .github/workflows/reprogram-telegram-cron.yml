@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Cron production → /api/cron/reprogram-telegram
         run: |
-          curl -sfS \
+          res=$(curl -sfS \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://flowchallenge-alpha.vercel.app/api/cron/reprogram-telegram"
+            "https://flowchallenge-alpha.vercel.app/api/cron/reprogram-telegram")
+          echo "$res"
+          # sent | skipped:not-slot | skipped:already-sent — visible dans l’onglet Actions

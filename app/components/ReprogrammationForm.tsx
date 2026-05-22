@@ -5,10 +5,14 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import {
   coerceReprogrammationEntry,
+  reprogrammationHasContent,
   type ReprogrammationEntry,
 } from "@/app/lib/reprogram-types";
 import { calendarYYYYMMDDInTimeZone } from "@/app/lib/timezone-wall-clock";
-import { persistReprogrammationForTelegram } from "@/app/reprogrammation/actions";
+import {
+  fetchReprogrammationFromCloud,
+  persistReprogrammationForTelegram,
+} from "@/app/reprogrammation/actions";
 import { sendReprogramToTelegramNow } from "@/app/reprogrammation/send-telegram-now-action";
 
 const EMPTY_ENTRY: ReprogrammationEntry = {
@@ -81,12 +85,37 @@ function formatLongDateInTimeZoneFrench(timeZone: string): string {
   }).format(new Date());
 }
 
+function mergePreferNonEmptyLocal(
+  local: ReprogrammationEntry | null,
+  remote: ReprogrammationEntry | null,
+): ReprogrammationEntry {
+  if (!remote) return local ?? EMPTY_ENTRY;
+  if (!local) return remote;
+
+  type K = keyof ReprogrammationEntry;
+  const keys: K[] = [
+    "identity",
+    "gratitude",
+    "program",
+    "deepFocusGoal",
+    "avoid",
+    "pursue",
+  ];
+  const merged = { ...EMPTY_ENTRY };
+  for (const key of keys) {
+    merged[key] = local[key].trim() !== "" ? local[key] : remote[key];
+  }
+  return merged;
+}
+
 function loadEntry(key: string): ReprogrammationEntry | null {
   try {
     const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
-    return coerceReprogrammationEntry(parsed);
+    const coerced = coerceReprogrammationEntry(parsed);
+    if (!reprogrammationHasContent(coerced)) return null;
+    return coerced;
   } catch {
     return null;
   }
@@ -192,6 +221,7 @@ function TelegramNowBanner({ banner }: { banner: PersistBanner }) {
 
 export function ReprogrammationForm() {
   const [deviceTz, setDeviceTz] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   const [entry, setEntry] = useState<ReprogrammationEntry>(EMPTY_ENTRY);
   const [saved, setSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -218,31 +248,73 @@ export function ReprogrammationForm() {
   }
 
   useEffect(() => {
-    const id = requestAnimationFrame(() => {
+    let cancelled = false;
+
+    void (async () => {
       const tz =
         Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
       const ek = entryStorageKeyForDeviceTz(tz);
       const bk = bannerStorageKeyForDeviceTz(tz);
 
-      const savedEntry = loadEntry(ek);
-      if (savedEntry) {
-        setEntry(savedEntry);
-        setSaved(true);
-      }
-
+      let restoredBanner: PersistBanner | null = null;
       try {
         const rawBanner = window.localStorage.getItem(bk);
-        if (rawBanner) {
-          const banner = parseStoredPersistBanner(rawBanner);
-          if (banner) setPersistBanner(banner);
-        }
+        if (rawBanner) restoredBanner = parseStoredPersistBanner(rawBanner);
       } catch {
         /* ignore */
       }
 
+      let localEntry: ReprogrammationEntry | null = null;
+      try {
+        localEntry = loadEntry(ek);
+      } catch {
+        /* ignore */
+      }
+
+      let remoteEntry: ReprogrammationEntry | null = null;
+      try {
+        const cloud = await fetchReprogrammationFromCloud(tz);
+        if (cloud.ok && cloud.entry) {
+          remoteEntry = cloud.entry;
+        }
+      } catch {
+        /* réseau : local seulement */
+      }
+
+      if (cancelled) return;
+
+      const merged = mergePreferNonEmptyLocal(localEntry, remoteEntry);
+      const mergeHasContent = reprogrammationHasContent(merged);
+      const localHad =
+        localEntry !== null && reprogrammationHasContent(localEntry);
+      const remoteHad =
+        remoteEntry !== null && reprogrammationHasContent(remoteEntry);
+
+      if (restoredBanner) {
+        setPersistBanner(restoredBanner);
+      }
+
       setDeviceTz(tz);
-    });
-    return () => cancelAnimationFrame(id);
+
+      if (mergeHasContent) {
+        setEntry(merged);
+        try {
+          window.localStorage.setItem(ek, JSON.stringify(merged));
+        } catch {
+          /* quota */
+        }
+        setSaved(localHad || remoteHad);
+      } else {
+        setEntry(EMPTY_ENTRY);
+        setSaved(false);
+      }
+
+      setHydrated(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function updateField(key: keyof ReprogrammationEntry, value: string) {
@@ -359,7 +431,7 @@ export function ReprogrammationForm() {
     }
   }
 
-  if (deviceTz === null) {
+  if (deviceTz === null || !hydrated) {
     return (
       <main className="relative isolate min-h-full overflow-hidden px-4 py-8 sm:px-6 sm:py-12">
         <div className="mx-auto max-w-5xl">

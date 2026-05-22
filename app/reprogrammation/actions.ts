@@ -3,9 +3,15 @@
 import "server-only";
 
 import type { ReprogrammationEntry } from "@/app/lib/reprogram-types";
-import { coerceReprogrammationEntry } from "@/app/lib/reprogram-types";
+import {
+  coerceReprogrammationEntry,
+  reprogrammationHasContent,
+} from "@/app/lib/reprogram-types";
 import { saveReminderTimezone } from "@/app/lib/reprogram-settings";
-import { saveReprogramForCalendarDay } from "@/app/lib/reprogram-storage";
+import {
+  loadReprogramForCalendarDay,
+  saveReprogramForCalendarDay,
+} from "@/app/lib/reprogram-storage";
 import { createRedis } from "@/app/lib/redis-client";
 import {
   calendarYYYYMMDDInTimeZone,
@@ -24,6 +30,56 @@ function clamp(entry: ReprogrammationEntry): ReprogrammationEntry {
     avoid: clip(entry.avoid),
     pursue: clip(entry.pursue),
   };
+}
+
+/** Lit la journée courante depuis Redis (même clé jour calendaire que l’envoi Telegram). */
+export async function fetchReprogrammationFromCloud(
+  reminderTimeZoneIANA: string,
+): Promise<{
+  ok: boolean;
+  cloudConfigured: boolean;
+  entry: ReprogrammationEntry | null;
+  calendarDay?: string;
+  message?: string;
+}> {
+  const tzTrim = (reminderTimeZoneIANA ?? "").trim();
+
+  if (!isValidIanaTimeZone(tzTrim)) {
+    return {
+      ok: false,
+      cloudConfigured: false,
+      entry: null,
+      message:
+        "Fuseau horaire invalide (vérifie la date système du navigateur).",
+    };
+  }
+
+  if (!createRedis()) {
+    return {
+      ok: true,
+      cloudConfigured: false,
+      entry: null,
+      calendarDay: calendarYYYYMMDDInTimeZone(new Date(), tzTrim),
+    };
+  }
+
+  try {
+    const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), tzTrim);
+    const loaded = await loadReprogramForCalendarDay(calendarDay);
+
+    const entry =
+      loaded && reprogrammationHasContent(loaded) ? loaded : null;
+
+    return { ok: true, cloudConfigured: true, entry, calendarDay };
+  } catch (e) {
+    console.error("[reprogram fetch cloud]", e);
+    return {
+      ok: false,
+      cloudConfigured: true,
+      entry: null,
+      message: "Impossible de lire la reprogrammation depuis Redis.",
+    };
+  }
 }
 
 /**

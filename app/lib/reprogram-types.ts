@@ -7,6 +7,11 @@ export type ReprogrammationEntry = {
   pursue: string;
 };
 
+/** Au moins un champ avec du texte (hors espaces). */
+export function reprogrammationHasContent(entry: ReprogrammationEntry): boolean {
+  return Object.values(entry).some((value) => value.trim() !== "");
+}
+
 export function coerceReprogrammationEntry(raw: unknown): ReprogrammationEntry {
   const o = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
   const s = (k: keyof ReprogrammationEntry): string =>
