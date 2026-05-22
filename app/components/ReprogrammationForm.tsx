@@ -87,11 +87,46 @@ function loadEntry(key: string): ReprogrammationEntry | null {
   }
 }
 
+type PersistTone = "syncing" | "success" | "warn" | "error";
+
+type PersistBanner = { tone: PersistTone; text: string };
+
+function persistBannerSurface(tone: PersistTone): string {
+  switch (tone) {
+    case "success":
+      return "border-emerald-500/35 bg-emerald-500/10 text-emerald-200/95";
+    case "warn":
+      return "border-amber-500/35 bg-amber-500/10 text-amber-200/95";
+    case "error":
+      return "border-rose-500/35 bg-rose-500/10 text-rose-200/95";
+    case "syncing":
+      return "border-cyan-500/35 bg-cyan-500/10 text-cyan-200/95";
+    default:
+      return "border-zinc-600 text-zinc-400";
+  }
+}
+
+function PersistBannerBox({ banner }: { banner: PersistBanner }) {
+  return (
+    <div
+      role="status"
+      className={`rounded-2xl border px-4 py-3 font-mono text-[11px] leading-relaxed ${persistBannerSurface(
+        banner.tone,
+      )}`}
+    >
+      {banner.text}
+    </div>
+  );
+}
+
 export function ReprogrammationForm() {
   const [entry, setEntry] = useState<ReprogrammationEntry>(EMPTY_ENTRY);
   const [saved, setSaved] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [syncNote, setSyncNote] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [persistBanner, setPersistBanner] = useState<PersistBanner | null>(
+    null,
+  );
 
   const storageKey = useMemo(() => storageKeyParisToday(), []);
   const dateLabel = useMemo(() => labelParisToday(), []);
@@ -112,25 +147,57 @@ export function ReprogrammationForm() {
     setEntry((prev) => ({ ...prev, [key]: value }));
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    window.localStorage.setItem(storageKey, JSON.stringify(entry));
-    setSaved(true);
-
-    void (async () => {
-      setSyncNote(null);
-      const cloud = await persistReprogrammationForTelegram(entry);
-      if (cloud.message) {
-        setSyncNote(cloud.message);
-      } else if (cloud.ok && cloud.stored) {
-        setSyncNote(null);
-      } else if (!cloud.ok) {
-        setSyncNote(cloud.message ?? "Erreur inconnue côté serveur.");
-      }
-    })();
-  }
-
   const hasContent = Object.values(entry).some((value) => value.trim() !== "");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!hasContent || isSaving) return;
+
+    window.localStorage.setItem(storageKey, JSON.stringify(entry));
+    setPersistBanner({
+      tone: "syncing",
+      text: "Synchronisation Redis (pour Telegram)…",
+    });
+    setIsSaving(true);
+    try {
+      const cloud = await persistReprogrammationForTelegram(entry);
+      const parisTail = cloud.parisDay ? ` · jour Paris ${cloud.parisDay}` : "";
+
+      if (!cloud.ok) {
+        setPersistBanner({
+          tone: "error",
+          text:
+            `${cloud.message ?? "Erreur inconnue côté serveur."}${parisTail}`,
+        });
+        setSaved(true);
+        return;
+      }
+
+      if (!cloud.stored) {
+        setPersistBanner({
+          tone: "warn",
+          text: `${cloud.message ?? "Pas de synchro cloud."}${parisTail}`,
+        });
+        setSaved(true);
+        return;
+      }
+
+      setPersistBanner({
+        tone: "success",
+        text: `Sauvé sur Redis${parisTail}. Les télégrammes liront ce texte.`,
+      });
+      setSaved(true);
+    } catch {
+      setPersistBanner({
+        tone: "error",
+        text:
+          "Réponse inattendue du serveur. Réessaie depuis https://flowchallenge-alpha.vercel.app/reprogrammation",
+      });
+      setSaved(true);
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   return (
     <main className="relative isolate min-h-full overflow-hidden px-4 py-8 sm:px-6 sm:py-12">
@@ -169,7 +236,7 @@ export function ReprogrammationForm() {
               accueil
             </Link>
             <div className="rounded-full border border-cyan-500/30 bg-cyan-500/8 px-3 py-1 font-orbitron text-[10px] uppercase tracking-[0.28em] text-cyan-200">
-              {saved ? "locked" : "input"}
+              {isSaving ? "sync" : saved ? "locked" : "input"}
             </div>
           </div>
         </header>
@@ -178,6 +245,11 @@ export function ReprogrammationForm() {
           <p className="font-mono text-xs text-zinc-600">Chargement...</p>
         ) : saved ? (
           <section className="rounded-3xl border border-cyan-500/25 bg-zinc-950/60 p-4 shadow-[0_0_40px_-14px_rgba(34,211,238,0.5)] backdrop-blur-sm sm:p-6">
+            {persistBanner ? (
+              <div className="mb-4">
+                <PersistBannerBox banner={persistBanner} />
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2">
               {FIELDS.map((field) => (
                 <article
@@ -195,7 +267,10 @@ export function ReprogrammationForm() {
             </div>
             <button
               type="button"
-              onClick={() => setSaved(false)}
+              onClick={() => {
+                setSaved(false);
+                setPersistBanner(null);
+              }}
               className="mt-5 rounded-full border border-zinc-700 px-4 py-2 font-orbitron text-[10px] uppercase tracking-[0.25em] text-zinc-400 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
             >
               modifier
@@ -230,16 +305,16 @@ export function ReprogrammationForm() {
               </p>
               <button
                 type="submit"
-                disabled={!hasContent}
+                disabled={!hasContent || isSaving}
                 className="rounded-full border border-cyan-400/50 bg-cyan-500/15 px-5 py-2.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-100 shadow-[0_0_24px_-8px_rgba(34,211,238,0.7)] transition disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/50 disabled:text-zinc-700 disabled:shadow-none hover:bg-cyan-500/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
               >
-                enregistrer
+                {isSaving ? "sync…" : "enregistrer"}
               </button>
             </div>
-            {syncNote ? (
-              <p className="mt-2 font-mono text-[11px] text-amber-400/95">
-                {syncNote}
-              </p>
+            {!saved && persistBanner ? (
+              <div className="mt-4">
+                <PersistBannerBox banner={persistBanner} />
+              </div>
             ) : null}
           </form>
         )}
