@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { authorizeCron } from "@/app/lib/cron-authorize";
 import { getParisHourMinute, getParisYYYYMMDD } from "@/app/lib/paris-time";
 import {
   claimCronSendSlot,
@@ -13,16 +14,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function authorizeCron(authHeader: string | null): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    console.warn("[cron] CRON_SECRET non défini — refusé en prod");
-    return process.env.NODE_ENV !== "production";
-  }
-  return authHeader === `Bearer ${secret}`;
-}
-
-/** Cron Vercel : chaque heure UTC ; déclenché lorsque Paris est à 14h ou 18h. */
+/** Cron externe : par défaut 14h ou 18h Paris. `?immediate=1` : envoi tant de suite (toujours avec Bearer CRON_SECRET). */
 export async function GET(req: Request) {
   if (!authorizeCron(req.headers.get("authorization"))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -42,8 +34,10 @@ export async function GET(req: Request) {
   const now = new Date();
   const parisDay = getParisYYYYMMDD(now);
   const { hour } = getParisHourMinute(now);
+  const url = new URL(req.url);
+  const immediate = url.searchParams.get("immediate") === "1";
 
-  if (hour !== 14 && hour !== 18) {
+  if (!immediate && hour !== 14 && hour !== 18) {
     return NextResponse.json({
       ok: true,
       skipped: true,
@@ -53,16 +47,18 @@ export async function GET(req: Request) {
     });
   }
 
-  const dedupeKey = `reprogram-telegram-sent:${parisDay}:slot${hour}`;
-  const firstTime = await claimCronSendSlot(dedupeKey, 86400 * 4);
-  if (!firstTime) {
-    return NextResponse.json({
-      ok: true,
-      skipped: true,
-      reason: "already-sent",
-      parisDay,
-      slot: hour,
-    });
+  if (!immediate) {
+    const dedupeKey = `reprogram-telegram-sent:${parisDay}:slot${hour}`;
+    const firstTime = await claimCronSendSlot(dedupeKey, 86400 * 4);
+    if (!firstTime) {
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "already-sent",
+        parisDay,
+        slot: hour,
+      });
+    }
   }
 
   const entry = await loadReprogramForParisDay(parisDay);
@@ -82,6 +78,7 @@ export async function GET(req: Request) {
     sent: true,
     parisDay,
     slot: hour,
+    immediate,
     hadContent: !!(entry && hasSomeContent(entry)),
   });
 }
