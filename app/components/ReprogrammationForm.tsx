@@ -91,10 +91,40 @@ type PersistTone = "syncing" | "success" | "warn" | "error";
 
 type PersistBanner = { tone: PersistTone; text: string };
 
+function parseStoredPersistBanner(raw: string): PersistBanner | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const o =
+      parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : null;
+    if (!o) return null;
+    const tone = o.tone;
+    const text = o.text;
+    if (
+      (tone === "success" || tone === "warn" || tone === "error") &&
+      typeof text === "string" &&
+      text.trim().length > 0
+    ) {
+      return { tone, text };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function persistBannerStorageKeyParisToday(): string {
+  return `flowchallenge-reprogrammation-banner-${getParisYYYYMMDD(new Date())}`;
+}
+
 function persistBannerSurface(tone: PersistTone): string {
   switch (tone) {
     case "success":
-      return "border-emerald-500/35 bg-emerald-500/10 text-emerald-200/95";
+      return [
+        "border-emerald-400/70 bg-emerald-600/25 text-emerald-50",
+        "ring-2 ring-emerald-400/55 shadow-[0_0_28px_-6px_rgba(52,211,153,0.55)]",
+      ].join(" ");
     case "warn":
       return "border-amber-500/35 bg-amber-500/10 text-amber-200/95";
     case "error":
@@ -107,14 +137,29 @@ function persistBannerSurface(tone: PersistTone): string {
 }
 
 function PersistBannerBox({ banner }: { banner: PersistBanner }) {
+  const label =
+    banner.tone === "success"
+      ? "SYNCHRO REDIS OK"
+      : banner.tone === "warn"
+        ? "SYNCHRO ATTENTION"
+        : banner.tone === "error"
+          ? "SYNCHRO ÉCHEC"
+          : "";
+
   return (
     <div
       role="status"
+      aria-live="polite"
       className={`rounded-2xl border px-4 py-3 font-mono text-[11px] leading-relaxed ${persistBannerSurface(
         banner.tone,
       )}`}
     >
-      {banner.text}
+      {label ? (
+        <p className="mb-1.5 font-orbitron text-[9px] font-semibold uppercase tracking-[0.22em] text-white/95">
+          {label}
+        </p>
+      ) : null}
+      <p className="whitespace-pre-wrap text-[12px] leading-relaxed">{banner.text}</p>
     </div>
   );
 }
@@ -129,7 +174,24 @@ export function ReprogrammationForm() {
   );
 
   const storageKey = useMemo(() => storageKeyParisToday(), []);
+  const bannerStorageKey = useMemo(
+    () => persistBannerStorageKeyParisToday(),
+    [],
+  );
   const dateLabel = useMemo(() => labelParisToday(), []);
+
+  function applyPersistBanner(next: PersistBanner | null): void {
+    setPersistBanner(next);
+    try {
+      if (!next || next.tone === "syncing") {
+        window.localStorage.removeItem(bannerStorageKey);
+      } else {
+        window.localStorage.setItem(bannerStorageKey, JSON.stringify(next));
+      }
+    } catch {
+      /* ignore quota */
+    }
+  }
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -138,10 +200,21 @@ export function ReprogrammationForm() {
         setEntry(savedEntry);
         setSaved(true);
       }
+
+      try {
+        const rawBanner = window.localStorage.getItem(bannerStorageKey);
+        if (rawBanner) {
+          const banner = parseStoredPersistBanner(rawBanner);
+          if (banner) setPersistBanner(banner);
+        }
+      } catch {
+        /* ignore */
+      }
+
       setMounted(true);
     });
     return () => cancelAnimationFrame(id);
-  }, [storageKey]);
+  }, [storageKey, bannerStorageKey]);
 
   function updateField(key: keyof ReprogrammationEntry, value: string) {
     setEntry((prev) => ({ ...prev, [key]: value }));
@@ -154,7 +227,7 @@ export function ReprogrammationForm() {
     if (!hasContent || isSaving) return;
 
     window.localStorage.setItem(storageKey, JSON.stringify(entry));
-    setPersistBanner({
+    applyPersistBanner({
       tone: "syncing",
       text: "Synchronisation Redis (pour Telegram)…",
     });
@@ -164,7 +237,7 @@ export function ReprogrammationForm() {
       const parisTail = cloud.parisDay ? ` · jour Paris ${cloud.parisDay}` : "";
 
       if (!cloud.ok) {
-        setPersistBanner({
+        applyPersistBanner({
           tone: "error",
           text:
             `${cloud.message ?? "Erreur inconnue côté serveur."}${parisTail}`,
@@ -174,7 +247,7 @@ export function ReprogrammationForm() {
       }
 
       if (!cloud.stored) {
-        setPersistBanner({
+        applyPersistBanner({
           tone: "warn",
           text: `${cloud.message ?? "Pas de synchro cloud."}${parisTail}`,
         });
@@ -182,13 +255,13 @@ export function ReprogrammationForm() {
         return;
       }
 
-      setPersistBanner({
+      applyPersistBanner({
         tone: "success",
-        text: `Sauvé sur Redis${parisTail}. Les télégrammes liront ce texte.`,
+        text: `✓ Ton texte est bien sur Redis${parisTail}. Les télégrammes liront exactement ces champs pour ce jour.`,
       });
       setSaved(true);
     } catch {
-      setPersistBanner({
+      applyPersistBanner({
         tone: "error",
         text:
           "Réponse inattendue du serveur. Réessaie depuis https://flowchallenge-alpha.vercel.app/reprogrammation",
@@ -269,7 +342,7 @@ export function ReprogrammationForm() {
               type="button"
               onClick={() => {
                 setSaved(false);
-                setPersistBanner(null);
+                applyPersistBanner(null);
               }}
               className="mt-5 rounded-full border border-zinc-700 px-4 py-2 font-orbitron text-[10px] uppercase tracking-[0.25em] text-zinc-400 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
             >
