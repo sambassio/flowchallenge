@@ -1,23 +1,19 @@
-# Vercel Hobby : cron limité à 1 fois / jour → rappels via GitHub Actions (gratuit).
-# Repo → Settings → Secrets and variables → Actions → « CRON_SECRET »
-# = même valeur que CRON_SECRET (Production) sur Vercel.
+# Vercel Hobby : cron limité → rappels via GitHub Actions.
+# Repo → Settings → Secrets → Actions → « CRON_SECRET » = Production Vercel.
+# Ping toutes les 15 minutes pour couvrir les fuseaux (ex. ±30 min UTC).
 
-name: Reprogram — rappels Telegram (Paris)
+name: Reprogram — rappels Telegram (13h / 21h locales)
 
 on:
   workflow_dispatch:
   schedule:
-    # 4 pings UTC/jour ; l’API n’envoie que si Paris = 14h ou 18h.
-    - cron: "0 12 * * *"
-    - cron: "0 13 * * *"
-    - cron: "0 16 * * *"
-    - cron: "0 17 * * *"
+    - cron: "*/15 * * * *"
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Handler cron production
+      - name: Cron production → /api/cron/reprogram-telegram
         run: |
           curl -sfS \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \

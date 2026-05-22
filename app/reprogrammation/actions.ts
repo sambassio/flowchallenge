@@ -4,8 +4,13 @@ import "server-only";
 
 import type { ReprogrammationEntry } from "@/app/lib/reprogram-types";
 import { coerceReprogrammationEntry } from "@/app/lib/reprogram-types";
-import { getParisYYYYMMDD } from "@/app/lib/paris-time";
-import { saveReprogramForParisDay } from "@/app/lib/reprogram-storage";
+import { saveReminderTimezone } from "@/app/lib/reprogram-settings";
+import { saveReprogramForCalendarDay } from "@/app/lib/reprogram-storage";
+import { createRedis } from "@/app/lib/redis-client";
+import {
+  calendarYYYYMMDDInTimeZone,
+  isValidIanaTimeZone,
+} from "@/app/lib/timezone-wall-clock";
 
 const MAX_FIELD = 3800;
 
@@ -21,41 +26,80 @@ function clamp(entry: ReprogrammationEntry): ReprogrammationEntry {
   };
 }
 
-/** Persiste le texte pour le jour calendaire Europe/Paris (rappels Telegram). */
-export async function persistReprogrammationForTelegram(payload: unknown): Promise<{
+/**
+ * Persiste le texte pour le jour calendaire dans le fuseau `reminderTimeZoneIANA`
+ * et enregistre ce fuseau pour les rappels automatiques à 13 h / 21 h locales.
+ */
+export async function persistReprogrammationForTelegram(
+  payload: unknown,
+  reminderTimeZoneIANA: string,
+): Promise<{
   ok: boolean;
   stored: boolean;
-  /** Jour-calendrier Paris (clé Redis) — utile pour vérifier la synchro. */
-  parisDay?: string;
+  calendarDay?: string;
+  timezone?: string;
   message?: string;
 }> {
-  let parisDay = "";
+  const tzTrim = (reminderTimeZoneIANA ?? "").trim();
+
   try {
+    if (!isValidIanaTimeZone(tzTrim)) {
+      return {
+        ok: false,
+        stored: false,
+        message:
+          "Fuseau horaire invalide (vérifie la date système du navigateur).",
+      };
+    }
+
     const entry = clamp(coerceReprogrammationEntry(payload));
-    parisDay = getParisYYYYMMDD();
-    const stored = await saveReprogramForParisDay(parisDay, entry);
+    const redisAvail = !!createRedis();
+    const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), tzTrim);
+
+    if (!redisAvail) {
+      return {
+        ok: true,
+        stored: false,
+        calendarDay,
+        timezone: tzTrim,
+        message:
+          "Redis non configuré sur ce déploiement : texte seulement sur cet appareil. Les télégrammes liront Redis de la prod (flowchallenge-alpha) — utilise ce domaine avec variables Upstash.",
+      };
+    }
+
+    const tzSaved = await saveReminderTimezone(tzTrim);
+    if (!tzSaved) {
+      return {
+        ok: false,
+        stored: false,
+        calendarDay,
+        timezone: tzTrim,
+        message: "Impossible d’enregistrer le fuseau sur Redis.",
+      };
+    }
+
+    const stored = await saveReprogramForCalendarDay(calendarDay, entry);
 
     return {
       ok: true,
       stored,
-      parisDay,
+      calendarDay,
+      timezone: tzTrim,
       message: stored
         ? undefined
-        : "Redis non configuré sur ce déploiement : texte seulement sur cet appareil. Les télégrammes liront Redis de la prod (flowchallenge-alpha) — utilise ce domaine avec variables Upstash.",
+        : "Écriture Redis de la journée impossible (vérifie les variables serveur).",
     };
   } catch (e) {
     console.error("[reprogram persist]", e);
-    try {
-      if (!parisDay) {
-        parisDay = getParisYYYYMMDD();
-      }
-    } catch {
-      parisDay = "";
-    }
     return {
       ok: false,
       stored: false,
-      ...(parisDay ? { parisDay } : {}),
+      ...(isValidIanaTimeZone(tzTrim)
+        ? {
+            calendarDay: calendarYYYYMMDDInTimeZone(new Date(), tzTrim),
+            timezone: tzTrim,
+          }
+        : {}),
       message:
         "Échec de la synchro cloud (voir logs). Le texte local est quand même enregistré.",
     };

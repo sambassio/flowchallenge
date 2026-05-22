@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { getParisYYYYMMDD } from "@/app/lib/paris-time";
+import { useEffect, useState } from "react";
 import {
   coerceReprogrammationEntry,
   type ReprogrammationEntry,
 } from "@/app/lib/reprogram-types";
+import { calendarYYYYMMDDInTimeZone } from "@/app/lib/timezone-wall-clock";
 import { persistReprogrammationForTelegram } from "@/app/reprogrammation/actions";
+import { sendReprogramToTelegramNow } from "@/app/reprogrammation/send-telegram-now-action";
 
 const EMPTY_ENTRY: ReprogrammationEntry = {
   identity: "",
@@ -63,13 +64,17 @@ const FIELDS: Array<{
   },
 ];
 
-function storageKeyParisToday(): string {
-  return `flowchallenge-reprogrammation-${getParisYYYYMMDD(new Date())}`;
+function entryStorageKeyForDeviceTz(tz: string): string {
+  return `flowchallenge-reprogrammation-${calendarYYYYMMDDInTimeZone(new Date(), tz)}`;
 }
 
-function labelParisToday(): string {
+function bannerStorageKeyForDeviceTz(tz: string): string {
+  return `flowchallenge-reprogrammation-banner-${calendarYYYYMMDDInTimeZone(new Date(), tz)}`;
+}
+
+function formatLongDateInTimeZoneFrench(timeZone: string): string {
   return new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
+    timeZone,
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -112,10 +117,6 @@ function parseStoredPersistBanner(raw: string): PersistBanner | null {
   } catch {
     return null;
   }
-}
-
-function persistBannerStorageKeyParisToday(): string {
-  return `flowchallenge-reprogrammation-banner-${getParisYYYYMMDD(new Date())}`;
 }
 
 function persistBannerSurface(tone: PersistTone): string {
@@ -164,45 +165,73 @@ function PersistBannerBox({ banner }: { banner: PersistBanner }) {
   );
 }
 
+function telegramNowBannerSurface(tone: PersistTone): string {
+  return tone === "success"
+    ? "border-fuchsia-500/40 bg-fuchsia-950/55 text-fuchsia-100 ring-2 ring-fuchsia-500/35"
+    : persistBannerSurface(tone);
+}
+
+function TelegramNowBanner({ banner }: { banner: PersistBanner }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`rounded-2xl border px-4 py-3 font-mono text-[11px] leading-relaxed ${telegramNowBannerSurface(
+        banner.tone,
+      )}`}
+    >
+      <p className="font-orbitron text-[9px] font-semibold uppercase tracking-[0.22em] text-white/95">
+        TELEGRAM
+      </p>
+      <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed">
+        {banner.text}
+      </p>
+    </div>
+  );
+}
+
 export function ReprogrammationForm() {
+  const [deviceTz, setDeviceTz] = useState<string | null>(null);
   const [entry, setEntry] = useState<ReprogrammationEntry>(EMPTY_ENTRY);
   const [saved, setSaved] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [persistBanner, setPersistBanner] = useState<PersistBanner | null>(
     null,
   );
-
-  const storageKey = useMemo(() => storageKeyParisToday(), []);
-  const bannerStorageKey = useMemo(
-    () => persistBannerStorageKeyParisToday(),
-    [],
+  const [telegramBanner, setTelegramBanner] = useState<PersistBanner | null>(
+    null,
   );
-  const dateLabel = useMemo(() => labelParisToday(), []);
+  const [telegramBusy, setTelegramBusy] = useState(false);
 
-  function applyPersistBanner(next: PersistBanner | null): void {
+  function applyPersistBanner(next: PersistBanner | null, tzForKey: string) {
     setPersistBanner(next);
     try {
+      const bk = bannerStorageKeyForDeviceTz(tzForKey);
       if (!next || next.tone === "syncing") {
-        window.localStorage.removeItem(bannerStorageKey);
+        window.localStorage.removeItem(bk);
       } else {
-        window.localStorage.setItem(bannerStorageKey, JSON.stringify(next));
+        window.localStorage.setItem(bk, JSON.stringify(next));
       }
     } catch {
-      /* ignore quota */
+      /* quota */
     }
   }
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      const savedEntry = loadEntry(storageKey);
+      const tz =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
+      const ek = entryStorageKeyForDeviceTz(tz);
+      const bk = bannerStorageKeyForDeviceTz(tz);
+
+      const savedEntry = loadEntry(ek);
       if (savedEntry) {
         setEntry(savedEntry);
         setSaved(true);
       }
 
       try {
-        const rawBanner = window.localStorage.getItem(bannerStorageKey);
+        const rawBanner = window.localStorage.getItem(bk);
         if (rawBanner) {
           const banner = parseStoredPersistBanner(rawBanner);
           if (banner) setPersistBanner(banner);
@@ -211,10 +240,10 @@ export function ReprogrammationForm() {
         /* ignore */
       }
 
-      setMounted(true);
+      setDeviceTz(tz);
     });
     return () => cancelAnimationFrame(id);
-  }, [storageKey, bannerStorageKey]);
+  }, []);
 
   function updateField(key: keyof ReprogrammationEntry, value: string) {
     setEntry((prev) => ({ ...prev, [key]: value }));
@@ -224,53 +253,145 @@ export function ReprogrammationForm() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!hasContent || isSaving) return;
+    if (!deviceTz || !hasContent || isSaving) return;
 
-    window.localStorage.setItem(storageKey, JSON.stringify(entry));
-    applyPersistBanner({
-      tone: "syncing",
-      text: "Synchronisation Redis (pour Telegram)…",
-    });
+    const ek = entryStorageKeyForDeviceTz(deviceTz);
+    window.localStorage.setItem(ek, JSON.stringify(entry));
+    applyPersistBanner(
+      {
+        tone: "syncing",
+        text: "Synchronisation Redis (pour Telegram)…",
+      },
+      deviceTz,
+    );
     setIsSaving(true);
     try {
-      const cloud = await persistReprogrammationForTelegram(entry);
-      const parisTail = cloud.parisDay ? ` · jour Paris ${cloud.parisDay}` : "";
+      const cloud = await persistReprogrammationForTelegram(entry, deviceTz);
+      const dayTail =
+        cloud.calendarDay != null && cloud.calendarDay !== ""
+          ? ` · jour ${cloud.calendarDay} (${cloud.timezone ?? deviceTz})`
+          : "";
 
       if (!cloud.ok) {
-        applyPersistBanner({
-          tone: "error",
-          text:
-            `${cloud.message ?? "Erreur inconnue côté serveur."}${parisTail}`,
-        });
+        applyPersistBanner(
+          {
+            tone: "error",
+            text:
+              `${cloud.message ?? "Erreur inconnue côté serveur."}${dayTail}`,
+          },
+          deviceTz,
+        );
         setSaved(true);
         return;
       }
 
       if (!cloud.stored) {
-        applyPersistBanner({
-          tone: "warn",
-          text: `${cloud.message ?? "Pas de synchro cloud."}${parisTail}`,
-        });
+        applyPersistBanner(
+          {
+            tone: "warn",
+            text: `${cloud.message ?? "Pas de synchro cloud."}${dayTail}`,
+          },
+          deviceTz,
+        );
         setSaved(true);
         return;
       }
 
-      applyPersistBanner({
-        tone: "success",
-        text: `✓ Ton texte est bien sur Redis${parisTail}. Les télégrammes liront exactement ces champs pour ce jour.`,
-      });
+      applyPersistBanner(
+        {
+          tone: "success",
+          text: `✓ Ton texte est bien sur Redis${dayTail}. Rappels : 13 h & 21 h (${deviceTz}).`,
+        },
+        deviceTz,
+      );
       setSaved(true);
     } catch {
-      applyPersistBanner({
-        tone: "error",
-        text:
-          "Réponse inattendue du serveur. Réessaie depuis https://flowchallenge-alpha.vercel.app/reprogrammation",
-      });
+      applyPersistBanner(
+        {
+          tone: "error",
+          text:
+            "Réponse inattendue du serveur. Réessaie depuis https://flowchallenge-alpha.vercel.app/reprogrammation",
+        },
+        deviceTz,
+      );
       setSaved(true);
     } finally {
       setIsSaving(false);
     }
   }
+
+  async function handleTelegramNow() {
+    if (!deviceTz || telegramBusy) return;
+    setTelegramBusy(true);
+    setTelegramBanner({
+      tone: "syncing",
+      text: "Envoi Telegram en cours…",
+    });
+    try {
+      const r = await sendReprogramToTelegramNow(deviceTz);
+      if (r.ok) {
+        const hint =
+          r.calendarDay != null ? ` · jour ${r.calendarDay}` : "";
+        const contentHint =
+          r.hadContent === false
+            ? " (attention : aucun texte Redis pour cette journée — message « vide » envoyé)."
+            : "";
+        setTelegramBanner({
+          tone: "success",
+          text: `Message envoyé sur Telegram.${hint}${contentHint}`,
+        });
+      } else {
+        setTelegramBanner({
+          tone: "error",
+          text:
+            r.message ??
+            "Échec d’envoi Telegram (voir les logs ou les secrets bot).",
+        });
+      }
+    } catch {
+      setTelegramBanner({
+        tone: "error",
+        text:
+          "Erreur réseau ou serveur inattendue pendant l’envoi Telegram.",
+      });
+    } finally {
+      setTelegramBusy(false);
+    }
+  }
+
+  if (deviceTz === null) {
+    return (
+      <main className="relative isolate min-h-full overflow-hidden px-4 py-8 sm:px-6 sm:py-12">
+        <div className="mx-auto max-w-5xl">
+          <p className="font-mono text-xs text-zinc-600">Chargement…</p>
+        </div>
+      </main>
+    );
+  }
+
+  const dateLabel = formatLongDateInTimeZoneFrench(deviceTz);
+
+  const footerHint = (
+    <p className="font-mono text-[11px] text-zinc-600">
+      Reset auto après{" "}
+      <span className="text-zinc-500">
+        minuit dans ton fuseau ({deviceTz})
+      </span>{" "}
+      · rappels Telegram automatiques&nbsp;:{" "}
+      <span className="text-zinc-500">13 h &amp; 21 h (heure locale)</span>.
+    </p>
+  );
+
+  const telegramButton = (
+    <button
+      type="button"
+      disabled={telegramBusy}
+      onClick={() => void handleTelegramNow()}
+      className="rounded-full border border-fuchsia-400/55 bg-fuchsia-600/14 px-4 py-2 font-orbitron text-[10px] font-semibold uppercase tracking-[0.22em] text-fuchsia-100 shadow-[0_0_28px_-10px_rgba(217,70,239,0.55)] transition disabled:cursor-not-allowed disabled:opacity-50 hover:bg-fuchsia-600/28 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-400 sm:min-w-[220px]"
+    >
+      {telegramBusy ? "telegram…" : "envoyer sur telegram maintenant"}
+    </button>
+  );
 
   return (
     <main className="relative isolate min-h-full overflow-hidden px-4 py-8 sm:px-6 sm:py-12">
@@ -300,6 +421,9 @@ export function ReprogrammationForm() {
               Reprogrammation
             </h1>
             <p className="mt-1 text-sm capitalize text-zinc-500">{dateLabel}</p>
+            <p className="mt-1 font-mono text-[11px] text-zinc-600">
+              fuseau système · <span className="text-zinc-400">{deviceTz}</span>
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Link
@@ -314,13 +438,16 @@ export function ReprogrammationForm() {
           </div>
         </header>
 
-        {!mounted ? (
-          <p className="font-mono text-xs text-zinc-600">Chargement...</p>
-        ) : saved ? (
+        {saved ? (
           <section className="rounded-3xl border border-cyan-500/25 bg-zinc-950/60 p-4 shadow-[0_0_40px_-14px_rgba(34,211,238,0.5)] backdrop-blur-sm sm:p-6">
             {persistBanner ? (
               <div className="mb-4">
                 <PersistBannerBox banner={persistBanner} />
+              </div>
+            ) : null}
+            {telegramBanner ? (
+              <div className="mb-4">
+                <TelegramNowBanner banner={telegramBanner} />
               </div>
             ) : null}
             <div className="grid gap-3 md:grid-cols-2">
@@ -338,16 +465,20 @@ export function ReprogrammationForm() {
                 </article>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setSaved(false);
-                applyPersistBanner(null);
-              }}
-              className="mt-5 rounded-full border border-zinc-700 px-4 py-2 font-orbitron text-[10px] uppercase tracking-[0.25em] text-zinc-400 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
-            >
-              modifier
-            </button>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-stretch">
+              <button
+                type="button"
+                onClick={() => {
+                  setSaved(false);
+                  applyPersistBanner(null, deviceTz);
+                  setTelegramBanner(null);
+                }}
+                className="rounded-full border border-zinc-700 px-4 py-2 font-orbitron text-[10px] uppercase tracking-[0.25em] text-zinc-400 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 sm:self-start"
+              >
+                modifier
+              </button>
+              {telegramButton}
+            </div>
           </section>
         ) : (
           <form
@@ -371,24 +502,35 @@ export function ReprogrammationForm() {
               ))}
             </div>
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-              <p className="font-mono text-[11px] text-zinc-600">
-                Reset auto demain selon{" "}
-                <span className="text-zinc-500">minuit Paris</span> · rappels
-                Telegram&nbsp;: 14&nbsp;h&nbsp;&amp; 18&nbsp;h (Paris).
-              </p>
+              {footerHint}
               <button
                 type="submit"
                 disabled={!hasContent || isSaving}
-                className="rounded-full border border-cyan-400/50 bg-cyan-500/15 px-5 py-2.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-100 shadow-[0_0_24px_-8px_rgba(34,211,238,0.7)] transition disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/50 disabled:text-zinc-700 disabled:shadow-none hover:bg-cyan-500/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
+                className="rounded-full border border-cyan-400/50 bg-cyan-500/15 px-5 py-2.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-cyan-100 shadow-[0_0_24px_-8px_rgba(34,211,238,0.7)] transition disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900/50 disabled:text-zinc-700 disabled:shadow-none hover:bg-cyan-500/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 sm:shrink-0"
               >
                 {isSaving ? "sync…" : "enregistrer"}
               </button>
             </div>
-            {!saved && persistBanner ? (
-              <div className="mt-4">
-                <PersistBannerBox banner={persistBanner} />
+            <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+              {persistBanner ? (
+                <div className="min-w-0 flex-1">
+                  <PersistBannerBox banner={persistBanner} />
+                </div>
+              ) : (
+                <div className="min-w-0 flex-1" />
+              )}
+              <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                <p className="font-orbitron text-[9px] uppercase tracking-[0.2em] text-zinc-600">
+                  test / override
+                </p>
+                {telegramButton}
+                {telegramBanner ? (
+                  <div className="mt-2 w-full max-w-md sm:max-w-sm">
+                    <TelegramNowBanner banner={telegramBanner} />
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </form>
         )}
       </div>

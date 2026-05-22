@@ -4,30 +4,45 @@ import { createRedis } from "@/app/lib/redis-client";
 
 const KEY_PREFIX = "reprogram";
 
-export function reprogramRedisKeyParisDate(parisYYYYMMDD: string): string {
-  return `${KEY_PREFIX}:${parisYYYYMMDD}`;
+export function reprogramRedisKeyCalendarDay(calendarYYYYMMDD: string): string {
+  return `${KEY_PREFIX}:${calendarYYYYMMDD}`;
 }
 
-export async function saveReprogramForParisDay(
-  parisYYYYMMDD: string,
+/** @deprecated utiliser reprogramRedisKeyCalendarDay */
+export function reprogramRedisKeyParisDate(ymd: string): string {
+  return reprogramRedisKeyCalendarDay(ymd);
+}
+
+export async function saveReprogramForCalendarDay(
+  calendarYYYYMMDD: string,
   entry: ReprogrammationEntry,
 ): Promise<boolean> {
   const redis = createRedis();
   if (!redis) return false;
-  await redis.set(reprogramRedisKeyParisDate(parisYYYYMMDD), entry, {
+  await redis.set(reprogramRedisKeyCalendarDay(calendarYYYYMMDD), entry, {
     ex: 60 * 60 * 24 * 120,
   });
   return true;
 }
 
-export async function loadReprogramForParisDay(
-  parisYYYYMMDD: string,
+/** @deprecated alias pour compat */
+export async function saveReprogramForParisDay(
+  ymd: string,
+  entry: ReprogrammationEntry,
+): Promise<boolean> {
+  return saveReprogramForCalendarDay(ymd, entry);
+}
+
+export async function loadReprogramForCalendarDay(
+  calendarYYYYMMDD: string,
 ): Promise<ReprogrammationEntry | null> {
   const redis = createRedis();
   if (!redis) return null;
   try {
     /** Upstash peut renvoyer une string JSON ou l’objet déjà parsé. */
-    const raw: unknown = await redis.get(reprogramRedisKeyParisDate(parisYYYYMMDD));
+    const raw: unknown = await redis.get(
+      reprogramRedisKeyCalendarDay(calendarYYYYMMDD),
+    );
     if (raw == null) return null;
     if (typeof raw === "string") {
       const parsed = JSON.parse(raw) as unknown;
@@ -40,6 +55,13 @@ export async function loadReprogramForParisDay(
     return null;
   }
   return null;
+}
+
+/** @deprecated alias */
+export async function loadReprogramForParisDay(
+  ymd: string,
+): Promise<ReprogrammationEntry | null> {
+  return loadReprogramForCalendarDay(ymd);
 }
 
 /** `true` si la clé n'existait pas (premier passage). */

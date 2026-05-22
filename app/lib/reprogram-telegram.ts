@@ -121,17 +121,18 @@ export async function sendTelegramHtmlChunks(messages: string[]): Promise<void> 
 }
 
 export async function sendReprogramReminderToTelegram(
-  parisYmd: string,
-  triggerHourParis: number,
+  calendarYmd: string,
+  wallClockHour: number,
+  timeZoneIANA: string,
   entry: ReprogrammationEntry | null,
 ): Promise<void> {
-  const slot = `${triggerHourParis}h Paris`;
-  const header = `[Reprogrammation] · ${slot} · ${parisYmd}`;
+  const tz = timeZoneIANA.trim();
+  const headerLine = `[Reprogrammation] · ${wallClockHour} h (${tz}) · ${calendarYmd}`;
   let html = "";
   if (entry && hasSomeContent(entry)) {
-    html = formatReprogramHtml(header, entry);
+    html = formatReprogramHtml(headerLine, entry);
   } else {
-    html = `<b>${escapeHtmlTelegramSafe(header)}</b>\nPas encore renseigné ce jour là.`;
+    html = `<b>${escapeHtmlTelegramSafe(headerLine)}</b>\nPas encore renseigné ce jour là.`;
   }
   const chunks = splitTelegramHtmlChunks(html);
   await sendTelegramHtmlChunks(chunks);
