@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   coerceReprogrammationEntry,
   reprogrammationHasContent,
@@ -68,12 +68,20 @@ const FIELDS: Array<{
   },
 ];
 
+const CALENDAR_DAY_YMD =
+  /^[12]\d{3}-(0[1-9]|1[012])-(0[1-9]|[12]\d|3[01])$/;
+
 function entryStorageKeyForDeviceTz(tz: string): string {
   return `flowchallenge-reprogrammation-${calendarYYYYMMDDInTimeZone(new Date(), tz)}`;
 }
 
-function bannerStorageKeyForDeviceTz(tz: string): string {
-  return `flowchallenge-reprogrammation-banner-${calendarYYYYMMDDInTimeZone(new Date(), tz)}`;
+/** Clé localStorage alignée sur le jour Redis (tous les appareils même `YYYY-MM-DD`). */
+function entryStorageKeyForCalendarDay(ymd: string): string {
+  return `flowchallenge-reprogrammation-${ymd}`;
+}
+
+function bannerStorageKeyForCalendarDay(ymd: string): string {
+  return `flowchallenge-reprogrammation-banner-${ymd}`;
 }
 
 function formatLongDateInTimeZoneFrench(timeZone: string): string {
@@ -232,11 +240,16 @@ export function ReprogrammationForm() {
     null,
   );
   const [telegramBusy, setTelegramBusy] = useState(false);
+  /** Jour mur `YYYY-MM-DD` utilisé comme clé Redis + localStorage (serveur puis client). */
+  const persistedWallDayRef = useRef<string | null>(null);
 
-  function applyPersistBanner(next: PersistBanner | null, tzForKey: string) {
+  function applyPersistBanner(
+    next: PersistBanner | null,
+    bannerStorageKey: string,
+  ) {
     setPersistBanner(next);
     try {
-      const bk = bannerStorageKeyForDeviceTz(tzForKey);
+      const bk = bannerStorageKey;
       if (!next || next.tone === "syncing") {
         window.localStorage.removeItem(bk);
       } else {
@@ -253,8 +266,34 @@ export function ReprogrammationForm() {
     void (async () => {
       const tz =
         Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
-      const ek = entryStorageKeyForDeviceTz(tz);
-      const bk = bannerStorageKeyForDeviceTz(tz);
+
+      let canonicalDayOpt: string | null = null;
+      let remoteEntry: ReprogrammationEntry | null = null;
+
+      try {
+        const cloud = await fetchReprogrammationFromCloud(tz);
+        if (
+          cloud.ok &&
+          typeof cloud.calendarDay === "string" &&
+          CALENDAR_DAY_YMD.test(cloud.calendarDay)
+        ) {
+          canonicalDayOpt = cloud.calendarDay;
+        }
+        if (cloud.ok && cloud.entry) {
+          remoteEntry = cloud.entry;
+        }
+      } catch {
+        /* réseau — on retombe sur le jour local uniquement */
+      }
+
+      const wallDayResolved =
+        canonicalDayOpt ??
+        calendarYYYYMMDDInTimeZone(new Date(), tz);
+      persistedWallDayRef.current = wallDayResolved;
+
+      const ekCanonical = entryStorageKeyForCalendarDay(wallDayResolved);
+      const ekLegacy = entryStorageKeyForDeviceTz(tz);
+      const bk = bannerStorageKeyForCalendarDay(wallDayResolved);
 
       let restoredBanner: PersistBanner | null = null;
       try {
@@ -266,19 +305,12 @@ export function ReprogrammationForm() {
 
       let localEntry: ReprogrammationEntry | null = null;
       try {
-        localEntry = loadEntry(ek);
-      } catch {
-        /* ignore */
-      }
-
-      let remoteEntry: ReprogrammationEntry | null = null;
-      try {
-        const cloud = await fetchReprogrammationFromCloud(tz);
-        if (cloud.ok && cloud.entry) {
-          remoteEntry = cloud.entry;
+        localEntry = loadEntry(ekCanonical);
+        if (!localEntry && ekLegacy !== ekCanonical) {
+          localEntry = loadEntry(ekLegacy);
         }
       } catch {
-        /* réseau : local seulement */
+        /* ignore */
       }
 
       if (cancelled) return;
@@ -299,7 +331,10 @@ export function ReprogrammationForm() {
       if (mergeHasContent) {
         setEntry(merged);
         try {
-          window.localStorage.setItem(ek, JSON.stringify(merged));
+          window.localStorage.setItem(ekCanonical, JSON.stringify(merged));
+          if (ekLegacy !== ekCanonical) {
+            window.localStorage.removeItem(ekLegacy);
+          }
         } catch {
           /* quota */
         }
@@ -327,21 +362,34 @@ export function ReprogrammationForm() {
     event.preventDefault();
     if (!deviceTz || !hasContent || isSaving) return;
 
-    const ek = entryStorageKeyForDeviceTz(deviceTz);
+    const wallDay =
+      persistedWallDayRef.current ??
+      calendarYYYYMMDDInTimeZone(new Date(), deviceTz);
+    persistedWallDayRef.current = wallDay;
+    const ek = entryStorageKeyForCalendarDay(wallDay);
+    const bk = bannerStorageKeyForCalendarDay(wallDay);
+
     window.localStorage.setItem(ek, JSON.stringify(entry));
     applyPersistBanner(
       {
         tone: "syncing",
         text: "Synchronisation Redis (pour Telegram)…",
       },
-      deviceTz,
+      bk,
     );
     setIsSaving(true);
     try {
       const cloud = await persistReprogrammationForTelegram(entry, deviceTz);
+      const reminderTz = cloud.timezone ?? deviceTz;
+      if (
+        cloud.calendarDay != null &&
+        CALENDAR_DAY_YMD.test(String(cloud.calendarDay))
+      ) {
+        persistedWallDayRef.current = String(cloud.calendarDay);
+      }
       const dayTail =
         cloud.calendarDay != null && cloud.calendarDay !== ""
-          ? ` · jour ${cloud.calendarDay} (${cloud.timezone ?? deviceTz})`
+          ? ` · jour ${cloud.calendarDay} (${reminderTz})`
           : "";
 
       if (!cloud.ok) {
@@ -351,7 +399,7 @@ export function ReprogrammationForm() {
             text:
               `${cloud.message ?? "Erreur inconnue côté serveur."}${dayTail}`,
           },
-          deviceTz,
+          bk,
         );
         setSaved(true);
         return;
@@ -363,7 +411,7 @@ export function ReprogrammationForm() {
             tone: "warn",
             text: `${cloud.message ?? "Pas de synchro cloud."}${dayTail}`,
           },
-          deviceTz,
+          bk,
         );
         setSaved(true);
         return;
@@ -372,9 +420,9 @@ export function ReprogrammationForm() {
       applyPersistBanner(
         {
           tone: "success",
-          text: `✓ Ton texte est bien sur Redis${dayTail}. Rappels : 13 h & 21 h (${deviceTz}).`,
+          text: `✓ Ton texte est bien sur Redis${dayTail}. Rappels : 13 h & 21 h (${reminderTz}).`,
         },
-        deviceTz,
+        bk,
       );
       setSaved(true);
     } catch {
@@ -384,7 +432,7 @@ export function ReprogrammationForm() {
           text:
             "Réponse inattendue du serveur. Réessaie depuis https://flowchallenge-alpha.vercel.app/reprogrammation",
         },
-        deviceTz,
+        bk,
       );
       setSaved(true);
     } finally {
@@ -496,6 +544,9 @@ export function ReprogrammationForm() {
             <p className="mt-1 font-mono text-[11px] text-zinc-600">
               fuseau système · <span className="text-zinc-400">{deviceTz}</span>
             </p>
+            <p className="mt-2 max-w-prose text-xs leading-snug text-zinc-500">
+              Synchro entre appareils : le jour enregistré sur le serveur suit le fuseau déjà dans Redis (celui défini lors du premier « enregistrer » avec Redis), pas le fuseau de chaque écran séparément.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Link
@@ -542,7 +593,13 @@ export function ReprogrammationForm() {
                 type="button"
                 onClick={() => {
                   setSaved(false);
-                  applyPersistBanner(null, deviceTz);
+                  applyPersistBanner(
+                    null,
+                    bannerStorageKeyForCalendarDay(
+                      persistedWallDayRef.current ??
+                        calendarYYYYMMDDInTimeZone(new Date(), deviceTz),
+                    ),
+                  );
                   setTelegramBanner(null);
                 }}
                 className="rounded-full border border-zinc-700 px-4 py-2 font-orbitron text-[10px] uppercase tracking-[0.25em] text-zinc-400 transition-colors hover:border-cyan-400/60 hover:text-cyan-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400 sm:self-start"

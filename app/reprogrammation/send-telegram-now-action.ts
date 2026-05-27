@@ -3,7 +3,10 @@
 import "server-only";
 
 import { createRedis } from "@/app/lib/redis-client";
-import { saveReminderTimezone } from "@/app/lib/reprogram-settings";
+import {
+  reprogramEffectiveTimeZone,
+  saveReminderTimezoneIfUnset,
+} from "@/app/lib/reprogram-settings";
 import { loadReprogramForCalendarDay } from "@/app/lib/reprogram-storage";
 import {
   hasSomeContent,
@@ -39,18 +42,19 @@ export async function sendReprogramToTelegramNow(reminderTimeZoneIANA: string): 
     };
   }
 
-  const savedTz = await saveReminderTimezone(trimmed);
+  const savedTz = await saveReminderTimezoneIfUnset(trimmed);
   if (!savedTz) {
     return { ok: false, message: "Échec d’enregistrement du fuseau (Redis)." };
   }
 
+  const effectiveTz = await reprogramEffectiveTimeZone(trimmed);
   const now = new Date();
-  const calendarDay = calendarYYYYMMDDInTimeZone(now, trimmed);
-  const { hour } = wallClockHourMinute(now, trimmed);
+  const calendarDay = calendarYYYYMMDDInTimeZone(now, effectiveTz);
+  const { hour } = wallClockHourMinute(now, effectiveTz);
   const entry = await loadReprogramForCalendarDay(calendarDay);
 
   try {
-    await sendReprogramReminderToTelegram(calendarDay, hour, trimmed, entry);
+    await sendReprogramReminderToTelegram(calendarDay, hour, effectiveTz, entry);
     return {
       ok: true,
       calendarDay,

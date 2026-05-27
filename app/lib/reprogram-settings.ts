@@ -36,6 +36,34 @@ export async function loadReminderTimezone(): Promise<string | null> {
   }
 }
 
+/** N’écrit Redis que si aucun fuseau n’est encore enregistré (première synchro). */
+export async function saveReminderTimezoneIfUnset(
+  timeZoneIANA: string,
+): Promise<boolean> {
+  const existing = await loadReminderTimezone();
+  if (existing !== null && isValidIanaTimeZone(existing.trim())) {
+    return true;
+  }
+  return saveReminderTimezone(timeZoneIANA.trim());
+}
+
+/**
+ * Fuseau « mur » utilisé pour le jour calendaire Redis (téléphone ↔ ordinateur) :
+ * priorité au fuseau déjà dans Redis ; sinon fuseau navigateur ; sinon Paris.
+ */
+export async function reprogramEffectiveTimeZone(
+  browserTzIANA: string,
+): Promise<string> {
+  const stored = await loadReminderTimezone();
+  if (stored !== null && isValidIanaTimeZone(stored.trim())) {
+    return stored.trim();
+  }
+  const b =
+    typeof browserTzIANA === "string" ? browserTzIANA.trim() : "";
+  if (isValidIanaTimeZone(b)) return b;
+  return "Europe/Paris";
+}
+
 /**
  * Fallback « raisonnable » lorsqu’aucun fuseau n’a encore été enregistré
  * pour que le cron ait bien une TZ valide jusqu’à la première visite.

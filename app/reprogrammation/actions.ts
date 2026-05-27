@@ -7,7 +7,10 @@ import {
   coerceReprogrammationEntry,
   reprogrammationHasContent,
 } from "@/app/lib/reprogram-types";
-import { saveReminderTimezone } from "@/app/lib/reprogram-settings";
+import {
+  reprogramEffectiveTimeZone,
+  saveReminderTimezoneIfUnset,
+} from "@/app/lib/reprogram-settings";
 import {
   loadReprogramForCalendarDay,
   saveReprogramForCalendarDay,
@@ -54,17 +57,20 @@ export async function fetchReprogrammationFromCloud(
     };
   }
 
+  /** Même jour calendaire que la sauvegarde / Telegram (fuseau canonique Redis). */
+  const wallTzForDay = await reprogramEffectiveTimeZone(tzTrim);
+  const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), wallTzForDay);
+
   if (!createRedis()) {
     return {
       ok: true,
       cloudConfigured: false,
       entry: null,
-      calendarDay: calendarYYYYMMDDInTimeZone(new Date(), tzTrim),
+      calendarDay,
     };
   }
 
   try {
-    const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), tzTrim);
     const loaded = await loadReprogramForCalendarDay(calendarDay);
 
     const entry =
@@ -83,8 +89,9 @@ export async function fetchReprogrammationFromCloud(
 }
 
 /**
- * Persiste le texte pour le jour calendaire dans le fuseau `reminderTimeZoneIANA`
- * et enregistre ce fuseau pour les rappels automatiques à 13 h / 21 h locales.
+ * Persiste le texte pour le jour calendaire (clé Redis commune à tous les appareils),
+ * et enregistre le fuseau IANA pour les rappels à 13 h / 21 h — une seule fois
+ * tant qu’une valeur existe déjà sur Redis.
  */
 export async function persistReprogrammationForTelegram(
   payload: unknown,
@@ -110,26 +117,28 @@ export async function persistReprogrammationForTelegram(
 
     const entry = clamp(coerceReprogrammationEntry(payload));
     const redisAvail = !!createRedis();
-    const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), tzTrim);
+
+    const wallTzForDay = await reprogramEffectiveTimeZone(tzTrim);
+    const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), wallTzForDay);
 
     if (!redisAvail) {
       return {
         ok: true,
         stored: false,
         calendarDay,
-        timezone: tzTrim,
+        timezone: wallTzForDay,
         message:
           "Redis non configuré sur ce déploiement : texte seulement sur cet appareil. Les télégrammes liront Redis de la prod (flowchallenge-alpha) — utilise ce domaine avec variables Upstash.",
       };
     }
 
-    const tzSaved = await saveReminderTimezone(tzTrim);
-    if (!tzSaved) {
+    const tzUnsetOk = await saveReminderTimezoneIfUnset(tzTrim);
+    if (!tzUnsetOk) {
       return {
         ok: false,
         stored: false,
         calendarDay,
-        timezone: tzTrim,
+        timezone: wallTzForDay,
         message: "Impossible d’enregistrer le fuseau sur Redis.",
       };
     }
@@ -140,7 +149,7 @@ export async function persistReprogrammationForTelegram(
       ok: true,
       stored,
       calendarDay,
-      timezone: tzTrim,
+      timezone: wallTzForDay,
       message: stored
         ? undefined
         : "Écriture Redis de la journée impossible (vérifie les variables serveur).",
