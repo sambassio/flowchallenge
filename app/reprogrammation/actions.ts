@@ -9,7 +9,7 @@ import {
 } from "@/app/lib/reprogram-types";
 import {
   reprogramEffectiveTimeZone,
-  saveReminderTimezoneIfUnset,
+  saveReminderTimezone,
 } from "@/app/lib/reprogram-settings";
 import {
   loadReprogramForCalendarDay,
@@ -57,11 +57,11 @@ export async function fetchReprogrammationFromCloud(
     };
   }
 
-  /** Même jour calendaire que la sauvegarde / Telegram (fuseau canonique Redis). */
+  const redisAvail = !!createRedis();
   const wallTzForDay = await reprogramEffectiveTimeZone(tzTrim);
   const calendarDay = calendarYYYYMMDDInTimeZone(new Date(), wallTzForDay);
 
-  if (!createRedis()) {
+  if (!redisAvail) {
     return {
       ok: true,
       cloudConfigured: false,
@@ -71,6 +71,17 @@ export async function fetchReprogrammationFromCloud(
   }
 
   try {
+    const savedTz = await saveReminderTimezone(tzTrim);
+    if (!savedTz) {
+      return {
+        ok: false,
+        cloudConfigured: true,
+        entry: null,
+        calendarDay,
+        message: "Impossible d’enregistrer le fuseau sur Redis.",
+      };
+    }
+
     const loaded = await loadReprogramForCalendarDay(calendarDay);
 
     const entry =
@@ -90,8 +101,7 @@ export async function fetchReprogrammationFromCloud(
 
 /**
  * Persiste le texte pour le jour calendaire (clé Redis commune à tous les appareils),
- * et enregistre le fuseau IANA pour les rappels à 13 h / 21 h — une seule fois
- * tant qu’une valeur existe déjà sur Redis.
+ * et enregistre le fuseau IANA courant pour les rappels à 13 h / 21 h.
  */
 export async function persistReprogrammationForTelegram(
   payload: unknown,
@@ -132,8 +142,8 @@ export async function persistReprogrammationForTelegram(
       };
     }
 
-    const tzUnsetOk = await saveReminderTimezoneIfUnset(tzTrim);
-    if (!tzUnsetOk) {
+    const savedTz = await saveReminderTimezone(tzTrim);
+    if (!savedTz) {
       return {
         ok: false,
         stored: false,

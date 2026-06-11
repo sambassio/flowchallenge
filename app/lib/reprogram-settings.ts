@@ -36,7 +36,7 @@ export async function loadReminderTimezone(): Promise<string | null> {
   }
 }
 
-/** N’écrit Redis que si aucun fuseau n’est encore enregistré (première synchro). */
+/** N’écrit Redis que si aucun fuseau n’est encore enregistré. */
 export async function saveReminderTimezoneIfUnset(
   timeZoneIANA: string,
 ): Promise<boolean> {
@@ -49,18 +49,18 @@ export async function saveReminderTimezoneIfUnset(
 
 /**
  * Fuseau « mur » utilisé pour le jour calendaire Redis (téléphone ↔ ordinateur) :
- * priorité au fuseau déjà dans Redis ; sinon fuseau navigateur ; sinon Paris.
+ * priorité au fuseau navigateur courant ; sinon fuseau Redis ; sinon Paris.
  */
 export async function reprogramEffectiveTimeZone(
   browserTzIANA: string,
 ): Promise<string> {
+  const b = typeof browserTzIANA === "string" ? browserTzIANA.trim() : "";
+  if (isValidIanaTimeZone(b)) return b;
+
   const stored = await loadReminderTimezone();
   if (stored !== null && isValidIanaTimeZone(stored.trim())) {
     return stored.trim();
   }
-  const b =
-    typeof browserTzIANA === "string" ? browserTzIANA.trim() : "";
-  if (isValidIanaTimeZone(b)) return b;
   return "Europe/Paris";
 }
 

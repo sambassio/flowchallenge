@@ -5,7 +5,7 @@ import "server-only";
 import { createRedis } from "@/app/lib/redis-client";
 import {
   reprogramEffectiveTimeZone,
-  saveReminderTimezoneIfUnset,
+  saveReminderTimezone,
 } from "@/app/lib/reprogram-settings";
 import { loadReprogramForCalendarDay } from "@/app/lib/reprogram-storage";
 import {
@@ -42,7 +42,7 @@ export async function sendReprogramToTelegramNow(reminderTimeZoneIANA: string): 
     };
   }
 
-  const savedTz = await saveReminderTimezoneIfUnset(trimmed);
+  const savedTz = await saveReminderTimezone(trimmed);
   if (!savedTz) {
     return { ok: false, message: "Échec d’enregistrement du fuseau (Redis)." };
   }
