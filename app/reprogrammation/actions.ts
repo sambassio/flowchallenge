@@ -26,7 +26,6 @@ const MAX_FIELD = 3800;
 function clamp(entry: ReprogrammationEntry): ReprogrammationEntry {
   const clip = (s: string) => s.slice(0, MAX_FIELD);
   return {
-    identity: clip(entry.identity),
     gratitude: clip(entry.gratitude),
     program: clip(entry.program),
     deepFocusGoal: clip(entry.deepFocusGoal),

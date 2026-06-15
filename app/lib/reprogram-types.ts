@@ -1,5 +1,4 @@
 export type ReprogrammationEntry = {
-  identity: string;
   gratitude: string;
   program: string;
   deepFocusGoal: string;
@@ -17,7 +16,6 @@ export function coerceReprogrammationEntry(raw: unknown): ReprogrammationEntry {
   const s = (k: keyof ReprogrammationEntry): string =>
     typeof o[k] === "string" ? o[k] : "";
   return {
-    identity: s("identity"),
     gratitude: s("gratitude"),
     program: s("program"),
     deepFocusGoal: s("deepFocusGoal"),

@@ -16,7 +16,6 @@ import {
 import { sendReprogramToTelegramNow } from "@/app/reprogrammation/send-telegram-now-action";
 
 const EMPTY_ENTRY: ReprogrammationEntry = {
-  identity: "",
   gratitude: "",
   program: "",
   deepFocusGoal: "",
@@ -30,12 +29,6 @@ const FIELDS: Array<{
   placeholder: string;
   rows: number;
 }> = [
-  {
-    key: "identity",
-    label: "Je suis quelqu'un qui :",
-    placeholder: "Ex : tient ses promesses, avance même quand c'est dur...",
-    rows: 3,
-  },
   {
     key: "gratitude",
     label: "5 choses pour lesquels je suis reconnaissant :",
@@ -102,7 +95,6 @@ function mergePreferNonEmptyLocal(
 
   type K = keyof ReprogrammationEntry;
   const keys: K[] = [
-    "identity",
     "gratitude",
     "program",
     "deepFocusGoal",
@@ -497,7 +489,7 @@ export function ReprogrammationForm() {
       <span className="text-zinc-500">
         minuit dans ton fuseau ({deviceTz})
       </span>{" "}
-      · rappels Telegram automatiques&nbsp;:{" "}
+      · rappels Telegram (QStash)&nbsp;:{" "}
       <span className="text-zinc-500">13 h &amp; 21 h (heure locale)</span>.
     </p>
   );
@@ -545,7 +537,7 @@ export function ReprogrammationForm() {
               fuseau système · <span className="text-zinc-400">{deviceTz}</span>
             </p>
             <p className="mt-2 max-w-prose text-xs leading-snug text-zinc-500">
-              Synchro entre appareils : le jour enregistré sur le serveur suit le fuseau déjà dans Redis (celui défini lors du premier « enregistrer » avec Redis), pas le fuseau de chaque écran séparément.
+              Synchro entre appareils : le jour enregistré sur le serveur et les rappels Telegram suivent le fuseau courant de ce navigateur lors de la dernière synchronisation.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">

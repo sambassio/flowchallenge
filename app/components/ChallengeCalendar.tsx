@@ -13,7 +13,9 @@ import {
   getAllChallengeDayKeys,
   TOTAL_DAYS,
 } from "@/app/lib/challenge-calendar-days";
+import { triggerUltimateCompleteCelebration } from "@/app/lib/challengeCompleteCelebration";
 import { burstNeonConfetti } from "@/app/lib/neonConfetti";
+import { ChallengeVictoryOverlay } from "@/app/components/ChallengeVictoryOverlay";
 
 type CalendarSlot = { kind: "empty" } | { kind: "day"; date: Date };
 
@@ -46,6 +48,10 @@ function saveCheckedLocal(next: Set<string>) {
     CHALLENGE_LOCAL_STORAGE_KEY,
     JSON.stringify([...next]),
   );
+}
+
+function isChallengeFullyComplete(keys: Set<string>, dayKeys: string[]): boolean {
+  return dayKeys.length > 0 && dayKeys.every((k) => keys.has(k));
 }
 
 function streakFromStart(keys: Set<string>, dayKeys: string[]): number {
@@ -123,8 +129,10 @@ export function ChallengeCalendar() {
 
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [mounted, setMounted] = useState(false);
+  const [victoryEpic, setVictoryEpic] = useState(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncEnabledRef = useRef(false);
+  const epicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,19 +187,38 @@ export function ChallengeCalendar() {
     (key: string) => {
       setChecked((prev) => {
         const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
+        const wasOn = next.has(key);
+        if (wasOn) next.delete(key);
         else next.add(key);
         saveCheckedLocal(next);
         scheduleCloudPersist(next);
+
+        const justCompleted =
+          !wasOn && isChallengeFullyComplete(next, dayKeys);
+        if (justCompleted) {
+          setTimeout(() => {
+            triggerUltimateCompleteCelebration();
+            setVictoryEpic(true);
+            if (epicTimerRef.current) clearTimeout(epicTimerRef.current);
+            epicTimerRef.current = setTimeout(() => {
+              setVictoryEpic(false);
+              epicTimerRef.current = null;
+            }, 5200);
+          }, 0);
+        } else if (!isChallengeFullyComplete(next, dayKeys)) {
+          setVictoryEpic(false);
+        }
+
         return next;
       });
     },
-    [scheduleCloudPersist],
+    [dayKeys, scheduleCloudPersist],
   );
 
   useEffect(() => {
     return () => {
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      if (epicTimerRef.current) clearTimeout(epicTimerRef.current);
     };
   }, []);
 
@@ -200,11 +227,19 @@ export function ChallengeCalendar() {
   const streak = streakFromStart(checked, dayKeys);
   const displayLevel =
     percent === 0 ? 0 : Math.min(10, Math.ceil(percent / 10));
+  const isComplete = mounted && isChallengeFullyComplete(checked, dayKeys);
+  const showVictoryOverlay = isComplete;
 
   return (
     <div className="relative isolate min-h-full overflow-hidden px-4 py-8 sm:px-6 sm:py-12">
+      {showVictoryOverlay ? (
+        <ChallengeVictoryOverlay mode={victoryEpic ? "epic" : "ambient"} />
+      ) : null}
       <div
-        className="animate-grid-pan pointer-events-none absolute inset-0 -z-10"
+        className={[
+          "animate-grid-pan pointer-events-none absolute inset-0 -z-10",
+          isComplete ? "animate-victory-grid-surge" : "",
+        ].join(" ")}
         style={{
           backgroundImage: `
             linear-gradient(to right, rgba(34, 211, 238, 0.06) 1px, transparent 1px),
@@ -309,7 +344,9 @@ export function ChallengeCalendar() {
                         "flex aspect-square w-full min-h-16 max-h-28 items-center justify-center rounded-xl border transition-[box-shadow,border-color,background-color,color] motion-safe:duration-200 sm:max-h-none sm:min-h-20 sm:aspect-auto sm:rounded-2xl sm:py-6",
                         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
                         isOn
-                          ? "border-cyan-400/70 bg-cyan-500/15 text-cyan-100 shadow-[0_0_20px_-4px_rgba(34,211,238,0.5)] motion-safe:active:translate-y-px"
+                          ? isComplete
+                            ? "animate-victory-cell-glow border-amber-300/80 bg-linear-to-br from-cyan-500/25 via-fuchsia-500/20 to-amber-400/15 text-amber-50"
+                            : "border-cyan-400/70 bg-cyan-500/15 text-cyan-100 shadow-[0_0_20px_-4px_rgba(34,211,238,0.5)] motion-safe:active:translate-y-px"
                           : "border-zinc-700/80 bg-zinc-950/35 text-zinc-100 hover:border-fuchsia-500/45 hover:bg-zinc-900/55 motion-safe:active:translate-y-px",
                       ].join(" ")}
                     >
@@ -405,6 +442,7 @@ export function ChallengeCalendar() {
                       ? `${String(doneCount).padStart(2, "0")}/${TOTAL_DAYS}`
                       : "··/31"
                   }
+                  foot={isComplete ? "max" : undefined}
                 />
 
                 <StatBadge

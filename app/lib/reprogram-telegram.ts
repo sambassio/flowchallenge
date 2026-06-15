@@ -1,7 +1,6 @@
 import type { ReprogrammationEntry } from "@/app/lib/reprogram-types";
 
 const LABELS: Array<[keyof ReprogrammationEntry, string]> = [
-  ["identity", "Je suis quelqu'un qui :"],
   ["gratitude", "5 choses pour lesquels je suis reconnaissant :"],
   ["program", "Programme de la journée :"],
   ["deepFocusGoal", "Objectif du deep focus :"],
