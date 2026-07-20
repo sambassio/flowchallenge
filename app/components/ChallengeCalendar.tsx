@@ -372,7 +372,7 @@ export function ChallengeCalendar() {
               </time>
               <span className="text-zinc-600"> · {TOTAL_DAYS}d</span>
               <span className="block text-[10px] text-zinc-600">
-                nouvelle grille · départ le 31 · progression sync Redis
+                nouvelle grille · départ le 20 · progression sync Redis
               </span>
             </p>
           </div>

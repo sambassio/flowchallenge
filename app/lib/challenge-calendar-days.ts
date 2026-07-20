@@ -1,12 +1,12 @@
-/** Grille challenge · saison courante (31 jours à partir du 31 juillet 2026). */
+/** Grille challenge · saison courante (31 jours à partir du 20 juillet 2026). */
 
 export const TOTAL_DAYS = 31;
 
 /** Identifiant de saison (clés Redis / localStorage). */
-export const CHALLENGE_SEASON_ID = "2026-07-31";
+export const CHALLENGE_SEASON_ID = "2026-07-20";
 
-/** Première case = 31 juillet 2026. */
-export const CHALLENGE_START = new Date(2026, 6, 31);
+/** Première case = 20 juillet 2026. */
+export const CHALLENGE_START = new Date(2026, 6, 20);
 
 export const CHALLENGE_LOCAL_STORAGE_KEY = `flowchallenge-${CHALLENGE_SEASON_ID}`;
 
