@@ -19,10 +19,10 @@ export function CompletionTitleStar({ count }: { count: number }) {
         src="/completion-star-green.png"
         alt=""
         aria-hidden
-        width={96}
-        height={96}
+        width={192}
+        height={190}
         priority
-        className="size-[1.55rem] w-auto drop-shadow-[0_0_10px_rgba(52,211,153,0.35)] sm:size-[1.9rem] md:size-[2.3rem]"
+        className="h-[1.55rem] w-auto drop-shadow-[0_0_10px_rgba(52,211,153,0.35)] sm:h-[1.9rem] md:h-[2.3rem]"
       />
     </span>
   );
