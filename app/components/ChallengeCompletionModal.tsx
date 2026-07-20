@@ -76,6 +76,9 @@ export function ChallengeCompletionModal({
             <h2 className="font-orbitron bg-linear-to-r from-emerald-200 via-teal-200 to-cyan-200 bg-clip-text text-lg font-bold tracking-tight text-transparent sm:text-xl">
               Challenges gagnés
             </h2>
+            <p className="font-orbitron mt-0.5 text-sm font-semibold text-zinc-200">
+              Challenge Deepfocus &amp; No Scroll
+            </p>
             <p className="font-mono text-[11px] text-zinc-500">
               {metas.length} saison{metas.length > 1 ? "s" : ""} · 100&nbsp;%
               complété{metas.length > 1 ? "es" : "e"}
