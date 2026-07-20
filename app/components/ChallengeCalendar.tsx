@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CompletionTitleStar } from "@/app/components/CompletionTitleStar";
+import { ChallengeCompletionModal } from "@/app/components/ChallengeCompletionModal";
 import {
   fetchChallengeChecksFromCloud,
   fetchChallengeCompletions,
@@ -175,6 +176,8 @@ export function ChallengeCalendar() {
   const [mounted, setMounted] = useState(false);
   const [victoryEpic, setVictoryEpic] = useState(false);
   const [completionCount, setCompletionCount] = useState(0);
+  const [completionSeasons, setCompletionSeasons] = useState<string[]>([]);
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncEnabledRef = useRef(false);
   const epicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -222,13 +225,18 @@ export function ChallengeCalendar() {
         await persistChallengeChecksToCloud([...merged]);
       }
 
-      const completionSeasons = completionsMerged.ok
-        ? completionsMerged.seasons
-        : localSeasons;
-      saveLocalCompletionSeasons(completionSeasons);
+      const seasonsResolved =
+        completionsCloud.ok && completionsCloud.seasons.length
+          ? completionsCloud.seasons
+          : completionsMerged.ok
+            ? completionsMerged.seasons
+            : localSeasons;
+      saveLocalCompletionSeasons(seasonsResolved);
+      setCompletionSeasons(seasonsResolved);
       const count = Math.max(
         completionsMerged.count,
         completionsCloud.ok ? completionsCloud.count : 0,
+        seasonsResolved.length,
       );
       setCompletionCount(count);
 
@@ -276,12 +284,14 @@ export function ChallengeCalendar() {
           void markCurrentChallengeSeasonComplete().then((r) => {
             if (r.ok) {
               setCompletionCount(r.count);
-              const seasons = loadLocalCompletionSeasons();
-              if (!seasons.includes(CHALLENGE_SEASON_ID)) {
-                seasons.push(CHALLENGE_SEASON_ID);
-                saveLocalCompletionSeasons(seasons);
-              }
             }
+            const seasons = loadLocalCompletionSeasons();
+            if (!seasons.includes(CHALLENGE_SEASON_ID)) {
+              seasons.push(CHALLENGE_SEASON_ID);
+              saveLocalCompletionSeasons(seasons);
+            }
+            setCompletionSeasons(seasons);
+            if (!r.ok) setCompletionCount((c) => Math.max(c, seasons.length));
           });
         } else if (!isChallengeFullyComplete(next, dayKeys)) {
           setVictoryEpic(false);
@@ -313,6 +323,12 @@ export function ChallengeCalendar() {
       {showVictoryOverlay ? (
         <ChallengeVictoryOverlay mode={victoryEpic ? "epic" : "ambient"} />
       ) : null}
+      {showCompletionModal ? (
+        <ChallengeCompletionModal
+          seasons={completionSeasons}
+          onClose={() => setShowCompletionModal(false)}
+        />
+      ) : null}
       <div
         className={[
           "animate-grid-pan pointer-events-none absolute inset-0 -z-10",
@@ -340,7 +356,20 @@ export function ChallengeCalendar() {
                 Challenge Deepfocus &amp; No Scroll
               </h1>
               {mounted && completionCount > 0 ? (
-                <CompletionTitleStar count={completionCount} />
+                <button
+                  type="button"
+                  onClick={() => setShowCompletionModal(true)}
+                  aria-haspopup="dialog"
+                  aria-label={`Voir les ${completionCount} challenge${completionCount > 1 ? "s" : ""} gagné${completionCount > 1 ? "s" : ""}`}
+                  className="group relative inline-flex shrink-0 items-center rounded-full transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400"
+                >
+                  <CompletionTitleStar count={completionCount} />
+                  {completionCount > 1 ? (
+                    <span className="absolute -bottom-1 -right-1 grid min-w-4 place-items-center rounded-full border border-emerald-300/50 bg-emerald-950/90 px-1 font-orbitron text-[9px] font-bold tabular-nums text-emerald-200">
+                      {completionCount}
+                    </span>
+                  ) : null}
+                </button>
               ) : null}
             </div>
             <p className="mt-1 font-mono text-xs text-zinc-500 tabular-nums">
