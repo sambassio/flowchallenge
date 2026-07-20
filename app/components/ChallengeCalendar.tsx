@@ -16,6 +16,7 @@ import {
   CHALLENGE_COMPLETIONS_LOCAL_KEY,
   CHALLENGE_LOCAL_STORAGE_KEY,
   CHALLENGE_SEASON_ID,
+  completedSeasonsMeta,
   formatChallengeDayKey,
   getAllChallengeDayKeys,
   getLegacyChallengeDayKeys,
@@ -177,7 +178,7 @@ export function ChallengeCalendar() {
   const [victoryEpic, setVictoryEpic] = useState(false);
   const [completionCount, setCompletionCount] = useState(0);
   const [completionSeasons, setCompletionSeasons] = useState<string[]>([]);
-  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [activeSeasonId, setActiveSeasonId] = useState<string | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncEnabledRef = useRef(false);
   const epicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -317,16 +318,21 @@ export function ChallengeCalendar() {
     percent === 0 ? 0 : Math.min(10, Math.ceil(percent / 10));
   const isComplete = mounted && isChallengeFullyComplete(checked, dayKeys);
   const showVictoryOverlay = isComplete;
+  const wonSeasonsAsc = useMemo(
+    () => [...completedSeasonsMeta(completionSeasons)].reverse(),
+    [completionSeasons],
+  );
 
   return (
     <div className="relative isolate min-h-full overflow-hidden px-4 py-8 sm:px-6 sm:py-12">
       {showVictoryOverlay ? (
         <ChallengeVictoryOverlay mode={victoryEpic ? "epic" : "ambient"} />
       ) : null}
-      {showCompletionModal ? (
+      {activeSeasonId ? (
         <ChallengeCompletionModal
           seasons={completionSeasons}
-          onClose={() => setShowCompletionModal(false)}
+          activeSeasonId={activeSeasonId}
+          onClose={() => setActiveSeasonId(null)}
         />
       ) : null}
       <div
@@ -355,21 +361,22 @@ export function ChallengeCalendar() {
               <h1 className="font-orbitron max-w-xl bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-balance text-xl font-bold leading-tight tracking-tight text-transparent sm:text-2xl md:text-3xl">
                 Challenge Deepfocus &amp; No Scroll
               </h1>
-              {mounted && completionCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setShowCompletionModal(true)}
-                  aria-haspopup="dialog"
-                  aria-label={`Voir les ${completionCount} challenge${completionCount > 1 ? "s" : ""} gagné${completionCount > 1 ? "s" : ""}`}
-                  className="group relative inline-flex shrink-0 items-center rounded-full transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400"
-                >
-                  <CompletionTitleStar count={completionCount} />
-                  {completionCount > 1 ? (
-                    <span className="absolute -bottom-1 -right-1 grid min-w-4 place-items-center rounded-full border border-emerald-300/50 bg-emerald-950/90 px-1 font-orbitron text-[9px] font-bold tabular-nums text-emerald-200">
-                      {completionCount}
-                    </span>
-                  ) : null}
-                </button>
+              {mounted && wonSeasonsAsc.length > 0 ? (
+                <span className="inline-flex shrink-0 items-center gap-1.5">
+                  {wonSeasonsAsc.map((meta) => (
+                    <button
+                      key={meta.id}
+                      type="button"
+                      onClick={() => setActiveSeasonId(meta.id)}
+                      aria-haspopup="dialog"
+                      aria-label={`Voir le challenge gagné — saison ${meta.index} ${meta.monthLabel}`}
+                      title={`Saison ${meta.index} · ${meta.monthLabel}`}
+                      className="inline-flex shrink-0 items-center rounded-full transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400"
+                    >
+                      <CompletionTitleStar />
+                    </button>
+                  ))}
+                </span>
               ) : null}
             </div>
             <p className="mt-1 font-mono text-xs text-zinc-500 tabular-nums">

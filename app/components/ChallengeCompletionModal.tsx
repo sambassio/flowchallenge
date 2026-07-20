@@ -7,6 +7,8 @@ import {
   TOTAL_DAYS,
 } from "@/app/lib/challenge-calendar-days";
 
+const CHALLENGE_TITLE = "Challenge Deepfocus & No Scroll";
+
 const RULES = [
   "1 deep focus d’1 h tous les jours, sauf le samedi.",
   "Pas de scroll avant 18 h.",
@@ -15,13 +17,16 @@ const RULES = [
 
 export function ChallengeCompletionModal({
   seasons,
+  activeSeasonId,
   onClose,
 }: {
   seasons: string[];
+  activeSeasonId: string;
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const metas = completedSeasonsMeta(seasons);
+  const meta = metas.find((m) => m.id === activeSeasonId) ?? null;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -37,12 +42,16 @@ export function ChallengeCompletionModal({
     };
   }, [onClose]);
 
+  const heading = meta
+    ? `Saison ${meta.index} · ${meta.monthLabel}`
+    : "Challenge gagné";
+
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6"
       role="dialog"
       aria-modal="true"
-      aria-label="Challenges gagnés"
+      aria-label={`Challenge gagné — ${heading}`}
     >
       <div
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -70,66 +79,59 @@ export function ChallengeCompletionModal({
             aria-hidden
             width={192}
             height={190}
-            className="h-10 w-auto drop-shadow-[0_0_12px_rgba(52,211,153,0.5)]"
+            className="h-11 w-auto drop-shadow-[0_0_12px_rgba(52,211,153,0.5)]"
           />
           <div>
+            <p className="font-orbitron text-[9px] font-semibold uppercase tracking-[0.3em] text-emerald-400/80">
+              challenge gagné
+            </p>
             <h2 className="font-orbitron bg-linear-to-r from-emerald-200 via-teal-200 to-cyan-200 bg-clip-text text-lg font-bold tracking-tight text-transparent sm:text-xl">
-              Challenges gagnés
+              {CHALLENGE_TITLE}
             </h2>
-            <p className="font-orbitron mt-0.5 text-sm font-semibold text-zinc-200">
-              Challenge Deepfocus &amp; No Scroll
-            </p>
-            <p className="font-mono text-[11px] text-zinc-500">
-              {metas.length} saison{metas.length > 1 ? "s" : ""} · 100&nbsp;%
-              complété{metas.length > 1 ? "es" : "e"}
-            </p>
           </div>
         </div>
 
-        <ul className="mt-5 space-y-3">
-          {metas.map((m) => (
-            <li
-              key={m.id}
-              className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4"
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <p className="font-orbitron text-sm font-semibold text-emerald-100">
-                  Saison {m.index} · {m.monthLabel}
-                  {m.isCurrent ? (
-                    <span className="ml-2 rounded-full border border-cyan-400/40 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.2em] text-cyan-200/90">
-                      en cours
-                    </span>
-                  ) : null}
-                </p>
-                <p className="font-orbitron text-xs font-bold tabular-nums text-emerald-300">
-                  {TOTAL_DAYS}/{TOTAL_DAYS}
-                </p>
-              </div>
-              <p className="mt-1 font-mono text-[11px] text-zinc-400 tabular-nums">
-                {m.startLabel} → {m.endLabel} · {TOTAL_DAYS} jours
+        {meta ? (
+          <div className="mt-5 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p className="font-orbitron text-sm font-semibold text-emerald-100">
+                {heading}
+                {meta.isCurrent ? (
+                  <span className="ml-2 rounded-full border border-cyan-400/40 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.2em] text-cyan-200/90">
+                    en cours
+                  </span>
+                ) : null}
               </p>
-              <ul className="mt-3 space-y-1.5">
-                {RULES.map((rule, i) => (
-                  <li
-                    key={i}
-                    className="flex gap-2 text-xs leading-snug text-zinc-400"
-                  >
-                    <span aria-hidden className="mt-0.5 text-emerald-400/90">
-                      ✓
-                    </span>
-                    <span>{rule}</span>
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
+              <p className="font-orbitron text-xs font-bold tabular-nums text-emerald-300">
+                {TOTAL_DAYS}/{TOTAL_DAYS}
+              </p>
+            </div>
+            <p className="mt-1 font-mono text-[11px] text-zinc-400 tabular-nums">
+              {meta.startLabel} → {meta.endLabel} · {TOTAL_DAYS} jours complétés
+            </p>
 
-        {metas.length === 0 ? (
+            <p className="mt-4 font-orbitron text-[9px] font-semibold uppercase tracking-[0.28em] text-emerald-400/80">
+              règles tenues
+            </p>
+            <ul className="mt-2 space-y-1.5">
+              {RULES.map((rule, i) => (
+                <li
+                  key={i}
+                  className="flex gap-2 text-xs leading-snug text-zinc-300"
+                >
+                  <span aria-hidden className="mt-0.5 text-emerald-400/90">
+                    ✓
+                  </span>
+                  <span>{rule}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
           <p className="mt-5 text-center font-mono text-xs text-zinc-500">
-            Aucun challenge complété pour l’instant.
+            Détails du challenge introuvables.
           </p>
-        ) : null}
+        )}
       </div>
     </div>
   );
