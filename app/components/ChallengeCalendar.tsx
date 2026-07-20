@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   fetchChallengeChecksFromCloud,
   fetchChallengeCompletions,
@@ -93,20 +93,49 @@ function detectLegacyLocalCompletion(): boolean {
   }
 }
 
-function CompletionTitleBadge({ count }: { count: number }) {
+function CompletionTitleStar({ count }: { count: number }) {
+  const uid = useId().replace(/:/g, "");
   if (count <= 0) return null;
+  const label =
+    count > 1
+      ? `Challenge terminé ${count} fois`
+      : "Challenge terminé";
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/55 bg-linear-to-r from-amber-500/20 via-yellow-500/10 to-amber-600/15 px-3 py-1 font-orbitron text-[10px] font-bold uppercase tracking-[0.18em] text-amber-100 shadow-[0_0_24px_-6px_rgba(251,191,36,0.55)] ring-1 ring-amber-300/25"
-      title={`${count} challenge${count > 1 ? "s" : ""} terminé${count > 1 ? "s" : ""}`}
+      className="inline-flex shrink-0 items-center self-center"
+      title={label}
+      aria-label={label}
     >
-      <span aria-hidden className="text-amber-300">
-        ★
-      </span>
-      cleared
-      {count > 1 ? (
-        <span className="tabular-nums text-amber-200/90">×{count}</span>
-      ) : null}
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden
+        className="size-[1.45rem] sm:size-[1.75rem] md:size-[2.15rem]"
+      >
+        <defs>
+          <linearGradient id={`${uid}-face`} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#6ee7b7" />
+            <stop offset="45%" stopColor="#34d399" />
+            <stop offset="100%" stopColor="#059669" />
+          </linearGradient>
+          <linearGradient id={`${uid}-edge`} x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#047857" />
+            <stop offset="100%" stopColor="#a7f3d0" stopOpacity="0.85" />
+          </linearGradient>
+          <filter id={`${uid}-glow`} x="-40%" y="-40%" width="180%" height="180%">
+            <feDropShadow dx="0" dy="2" stdDeviation="1.2" floodColor="#064e3b" floodOpacity="0.65" />
+            <feDropShadow dx="0" dy="-1" stdDeviation="0.4" floodColor="#a7f3d0" floodOpacity="0.5" />
+            <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#34d399" floodOpacity="0.35" />
+          </filter>
+        </defs>
+        <path
+          filter={`url(#${uid}-glow)`}
+          d="M12 2.2 14.65 8.4 21.4 9.15l-5.2 4.5 1.55 6.75L12 17.1l-5.75 3.3 1.55-6.75-5.2-4.5 6.75-.75L12 2.2z"
+          fill={`url(#${uid}-face)`}
+          stroke={`url(#${uid}-edge)`}
+          strokeWidth="0.65"
+          strokeLinejoin="round"
+        />
+      </svg>
     </span>
   );
 }
@@ -357,7 +386,7 @@ export function ChallengeCalendar() {
                 Challenge Deepfocus &amp; No Scroll
               </h1>
               {mounted && completionCount > 0 ? (
-                <CompletionTitleBadge count={completionCount} />
+                <CompletionTitleStar count={completionCount} />
               ) : null}
             </div>
             <p className="mt-1 font-mono text-xs text-zinc-500 tabular-nums">
