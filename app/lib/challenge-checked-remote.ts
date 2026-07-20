@@ -1,14 +1,21 @@
+import {
+  CHALLENGE_SEASON_ID,
+  challengeChecksRedisKey,
+} from "@/app/lib/challenge-calendar-days";
 import { createRedis } from "@/app/lib/redis-client";
 
-const REDIS_KEY = "challenge:checked-days:v1";
 const TTL_SEC = 60 * 60 * 24 * 400;
+
+function checksKey(): string {
+  return challengeChecksRedisKey(CHALLENGE_SEASON_ID);
+}
 
 /** Charge les journées cochées depuis Redis (`null` si absent / erreur). */
 export async function loadChallengeChecksFromRedis(): Promise<string[] | null> {
   const redis = createRedis();
   if (!redis) return null;
   try {
-    const raw: unknown = await redis.get(REDIS_KEY);
+    const raw: unknown = await redis.get(checksKey());
     if (raw == null) return [];
     if (typeof raw === "string") {
       const parsed = JSON.parse(raw) as unknown;
@@ -30,7 +37,7 @@ export async function saveChallengeChecksToRedis(
   const redis = createRedis();
   if (!redis) return false;
   try {
-    await redis.set(REDIS_KEY, sortedUniqueKeys, { ex: TTL_SEC });
+    await redis.set(checksKey(), sortedUniqueKeys, { ex: TTL_SEC });
     return true;
   } catch {
     return false;

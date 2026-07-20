@@ -7,6 +7,14 @@ import {
   loadChallengeChecksFromRedis,
   saveChallengeChecksToRedis,
 } from "@/app/lib/challenge-checked-remote";
+import {
+  CHALLENGE_SEASON_ID,
+  completionCount,
+  loadChallengeCompletionsFromRedis,
+  markChallengeSeasonCompleteInRedis,
+  migrateLegacyChallengeCompletionIfNeeded,
+  saveChallengeCompletionsToRedis,
+} from "@/app/lib/challenge-completion-remote";
 import { createRedis } from "@/app/lib/redis-client";
 
 function sanitizeKeys(keys: string[]): string[] {
@@ -50,4 +58,83 @@ export async function persistChallengeChecksToCloud(
   const clean = sanitizeKeys(keys);
   const stored = await saveChallengeChecksToRedis(clean);
   return { ok: true, stored };
+}
+
+/** Badges « challenge cleared » (saisons terminées), avec migration mai 2026. */
+export async function fetchChallengeCompletions(): Promise<{
+  ok: boolean;
+  count: number;
+  seasons: string[];
+  cloudConfigured: boolean;
+}> {
+  if (!createRedis()) {
+    return { ok: true, count: 0, seasons: [], cloudConfigured: false };
+  }
+
+  try {
+    await migrateLegacyChallengeCompletionIfNeeded();
+    const record =
+      (await loadChallengeCompletionsFromRedis()) ?? { seasons: [] };
+    return {
+      ok: true,
+      count: completionCount(record),
+      seasons: record.seasons,
+      cloudConfigured: true,
+    };
+  } catch {
+    return { ok: false, count: 0, seasons: [], cloudConfigured: true };
+  }
+}
+
+/** Enregistre la victoire de la saison en cours (idempotent). */
+export async function markCurrentChallengeSeasonComplete(): Promise<{
+  ok: boolean;
+  count: number;
+  stored: boolean;
+}> {
+  if (!createRedis()) {
+    return { ok: false, count: 0, stored: false };
+  }
+
+  try {
+    const next = await markChallengeSeasonCompleteInRedis(CHALLENGE_SEASON_ID);
+    if (!next) {
+      return { ok: false, count: 0, stored: false };
+    }
+    return {
+      ok: true,
+      count: completionCount(next),
+      stored: true,
+    };
+  } catch {
+    return { ok: false, count: 0, stored: false };
+  }
+}
+
+/** Fusionne des saisons complétées côté client (secours sans Redis). */
+export async function mergeChallengeCompletionsFromClient(
+  localSeasons: string[],
+): Promise<{ ok: boolean; count: number; seasons: string[] }> {
+  const clean = [
+    ...new Set(
+      localSeasons.filter((s) => typeof s === "string" && s.length > 0),
+    ),
+  ].sort();
+
+  if (!createRedis()) {
+    return { ok: true, count: clean.length, seasons: clean };
+  }
+
+  try {
+    await migrateLegacyChallengeCompletionIfNeeded();
+    const current =
+      (await loadChallengeCompletionsFromRedis()) ?? { seasons: [] };
+    const merged = [...new Set([...current.seasons, ...clean])].sort();
+    if (merged.length !== current.seasons.length) {
+      await saveChallengeCompletionsToRedis({ seasons: merged });
+    }
+    return { ok: true, count: merged.length, seasons: merged };
+  } catch {
+    return { ok: false, count: clean.length, seasons: clean };
+  }
 }

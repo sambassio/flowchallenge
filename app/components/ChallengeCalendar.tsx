@@ -4,13 +4,21 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchChallengeChecksFromCloud,
+  fetchChallengeCompletions,
+  markCurrentChallengeSeasonComplete,
+  mergeChallengeCompletionsFromClient,
   persistChallengeChecksToCloud,
 } from "@/app/challenge-calendar/actions";
 import {
   buildChallengeDates,
+  CHALLENGE_COMPLETIONS_LOCAL_KEY,
   CHALLENGE_LOCAL_STORAGE_KEY,
+  CHALLENGE_SEASON_ID,
   formatChallengeDayKey,
   getAllChallengeDayKeys,
+  getLegacyChallengeDayKeys,
+  LEGACY_CHALLENGE_LOCAL_STORAGE_KEY,
+  LEGACY_CHALLENGE_SEASON_ID,
   TOTAL_DAYS,
 } from "@/app/lib/challenge-calendar-days";
 import { triggerUltimateCompleteCelebration } from "@/app/lib/challengeCompleteCelebration";
@@ -47,6 +55,59 @@ function saveCheckedLocal(next: Set<string>) {
   window.localStorage.setItem(
     CHALLENGE_LOCAL_STORAGE_KEY,
     JSON.stringify([...next]),
+  );
+}
+
+function loadLocalCompletionSeasons(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(CHALLENGE_COMPLETIONS_LOCAL_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is string => typeof x === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalCompletionSeasons(seasons: string[]) {
+  window.localStorage.setItem(
+    CHALLENGE_COMPLETIONS_LOCAL_KEY,
+    JSON.stringify([...new Set(seasons)].sort()),
+  );
+}
+
+/** Victoire mai 2026 encore seulement en localStorage navigateur. */
+function detectLegacyLocalCompletion(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(LEGACY_CHALLENGE_LOCAL_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return false;
+    const keys = parsed.filter((x): x is string => typeof x === "string");
+    return getLegacyChallengeDayKeys().every((k) => keys.includes(k));
+  } catch {
+    return false;
+  }
+}
+
+function CompletionTitleBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/55 bg-linear-to-r from-amber-500/20 via-yellow-500/10 to-amber-600/15 px-3 py-1 font-orbitron text-[10px] font-bold uppercase tracking-[0.18em] text-amber-100 shadow-[0_0_24px_-6px_rgba(251,191,36,0.55)] ring-1 ring-amber-300/25"
+      title={`${count} challenge${count > 1 ? "s" : ""} terminé${count > 1 ? "s" : ""}`}
+    >
+      <span aria-hidden className="text-amber-300">
+        ★
+      </span>
+      cleared
+      {count > 1 ? (
+        <span className="tabular-nums text-amber-200/90">×{count}</span>
+      ) : null}
+    </span>
   );
 }
 
@@ -130,6 +191,7 @@ export function ChallengeCalendar() {
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [mounted, setMounted] = useState(false);
   const [victoryEpic, setVictoryEpic] = useState(false);
+  const [completionCount, setCompletionCount] = useState(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncEnabledRef = useRef(false);
   const epicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,11 +201,24 @@ export function ChallengeCalendar() {
 
     (async () => {
       const local = loadCheckedLocal();
-      const { keys: remote, ok, cloudConfigured } =
-        await fetchChallengeChecksFromCloud();
+      const localSeasons = loadLocalCompletionSeasons();
+      if (
+        detectLegacyLocalCompletion() &&
+        !localSeasons.includes(LEGACY_CHALLENGE_SEASON_ID)
+      ) {
+        localSeasons.push(LEGACY_CHALLENGE_SEASON_ID);
+      }
+
+      const [checksCloud, completionsMerged, completionsCloud] =
+        await Promise.all([
+          fetchChallengeChecksFromCloud(),
+          mergeChallengeCompletionsFromClient(localSeasons),
+          fetchChallengeCompletions(),
+        ]);
 
       if (cancelled) return;
 
+      const { keys: remote, ok, cloudConfigured } = checksCloud;
       cloudSyncEnabledRef.current = cloudConfigured;
 
       const allowed = new Set(dayKeys);
@@ -163,6 +238,16 @@ export function ChallengeCalendar() {
       if (cloudConfigured && ok) {
         await persistChallengeChecksToCloud([...merged]);
       }
+
+      const completionSeasons = completionsMerged.ok
+        ? completionsMerged.seasons
+        : localSeasons;
+      saveLocalCompletionSeasons(completionSeasons);
+      const count = Math.max(
+        completionsMerged.count,
+        completionsCloud.ok ? completionsCloud.count : 0,
+      );
+      setCompletionCount(count);
 
       setMounted(true);
     })();
@@ -205,6 +290,16 @@ export function ChallengeCalendar() {
               epicTimerRef.current = null;
             }, 5200);
           }, 0);
+          void markCurrentChallengeSeasonComplete().then((r) => {
+            if (r.ok) {
+              setCompletionCount(r.count);
+              const seasons = loadLocalCompletionSeasons();
+              if (!seasons.includes(CHALLENGE_SEASON_ID)) {
+                seasons.push(CHALLENGE_SEASON_ID);
+                saveLocalCompletionSeasons(seasons);
+              }
+            }
+          });
         } else if (!isChallengeFullyComplete(next, dayKeys)) {
           setVictoryEpic(false);
         }
@@ -257,10 +352,19 @@ export function ChallengeCalendar() {
       <div className="mx-auto max-w-7xl space-y-8">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-cyan-500/15 pb-5">
           <div>
-            <h1 className="font-orbitron max-w-xl bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-balance text-xl font-bold leading-tight tracking-tight text-transparent sm:text-2xl md:text-3xl">
-              Challenge Deepfocus &amp; No Scroll
-            </h1>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h1 className="font-orbitron max-w-xl bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-balance text-xl font-bold leading-tight tracking-tight text-transparent sm:text-2xl md:text-3xl">
+                Challenge Deepfocus &amp; No Scroll
+              </h1>
+              {mounted && completionCount > 0 ? (
+                <CompletionTitleBadge count={completionCount} />
+              ) : null}
+            </div>
             <p className="mt-1 font-mono text-xs text-zinc-500 tabular-nums">
+              <span className="text-fuchsia-400/80">
+                saison {Math.max(1, completionCount + 1)}
+              </span>
+              {" · "}
               <time dateTime={dayKeys[0]}>{days[0].toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).replace(/\//g, ".")}</time>
               {" → "}
               <time dateTime={dayKeys[TOTAL_DAYS - 1]}>
@@ -268,7 +372,7 @@ export function ChallengeCalendar() {
               </time>
               <span className="text-zinc-600"> · {TOTAL_DAYS}d</span>
               <span className="block text-[10px] text-zinc-600">
-                ta progression suit sur tous tes appareils (nuage Redis)
+                nouvelle grille · départ le 31 · progression sync Redis
               </span>
             </p>
           </div>
