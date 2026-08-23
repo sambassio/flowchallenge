@@ -12,6 +12,72 @@ export const CHALLENGE_LOCAL_STORAGE_KEY = `flowchallenge-${CHALLENGE_SEASON_ID}
 
 export const CHALLENGE_COMPLETIONS_LOCAL_KEY = "flowchallenge-completions-v1";
 
+/** Challenge actif (titre + règles + date de départ) — sync navigateur. */
+export const CHALLENGE_ACTIVE_LOCAL_KEY = "flowchallenge-active-v1";
+
+/** Registre des définitions par saison (titre + règles), pour l’historique. */
+export const CHALLENGE_DEFINITIONS_LOCAL_KEY = "flowchallenge-definitions-v1";
+
+/** Clé localStorage des journées cochées pour une saison donnée. */
+export function challengeChecksLocalKey(seasonId: string): string {
+  return `flowchallenge-${seasonId}`;
+}
+
+/** Titre par défaut (saison July 2026 historique). */
+export const DEFAULT_CHALLENGE_TITLE = "Challenge Deepfocus & No Scroll";
+
+/** Règles par défaut (saison July 2026 historique). */
+export const DEFAULT_CHALLENGE_RULES: string[] = [
+  "1 deep focus d’1 h tous les jours, sauf le samedi.",
+  "Pas de scroll avant 18 h.",
+  "Reprogrammation tous les matins avec le café.",
+];
+
+/** Définition d’un challenge : identifiée par sa date de départ (= id). */
+export type ChallengeDefinition = {
+  /** Identifiant = date de départ au format YYYY-MM-DD. */
+  id: string;
+  title: string;
+  rules: string[];
+  /** ISO timestamp de création (facultatif). */
+  createdAt?: string;
+};
+
+/** Métadonnées (titre + règles) par saison. */
+export type ChallengeDefinitionMeta = {
+  title: string;
+  rules: string[];
+};
+
+export const DEFAULT_CHALLENGE: ChallengeDefinition = {
+  id: CHALLENGE_SEASON_ID,
+  title: DEFAULT_CHALLENGE_TITLE,
+  rules: DEFAULT_CHALLENGE_RULES,
+};
+
+export const MAX_CHALLENGE_RULES = 8;
+
+/** Valide / nettoie une définition brute (localStorage ou Redis). */
+export function sanitizeChallengeDefinition(
+  raw: unknown,
+): ChallengeDefinition | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(id) || !parseSeasonStart(id)) return null;
+  const title = typeof o.title === "string" ? o.title.trim() : "";
+  if (!title) return null;
+  const rulesRaw = Array.isArray(o.rules) ? o.rules : [];
+  const rules = rulesRaw
+    .filter((r): r is string => typeof r === "string")
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0)
+    .slice(0, MAX_CHALLENGE_RULES);
+  const createdAt =
+    typeof o.createdAt === "string" ? o.createdAt : undefined;
+  return { id, title, rules, createdAt };
+}
+
 /** Saison mai 2026 (migration badge si 31/31). */
 export const LEGACY_CHALLENGE_SEASON_ID = "2026-05-18";
 export const LEGACY_CHALLENGE_START = new Date(2026, 4, 18);
@@ -39,6 +105,23 @@ export function buildChallengeDates(): Date[] {
 
 export function getAllChallengeDayKeys(): string[] {
   return buildChallengeDates().map(formatChallengeDayKey);
+}
+
+/** Dates d’une saison à partir de son id (date de départ YYYY-MM-DD). */
+export function datesFromStartKey(startKey: string): Date[] {
+  const start = parseSeasonStart(startKey);
+  if (!start) return [];
+  return buildChallengeDatesFromStart(start);
+}
+
+/** Journées (clés) d’une saison à partir de son id. */
+export function dayKeysFromStartKey(startKey: string): string[] {
+  return datesFromStartKey(startKey).map(formatChallengeDayKey);
+}
+
+/** Clé du jour courant (date locale) au format YYYY-MM-DD. */
+export function todayChallengeKey(): string {
+  return formatChallengeDayKey(new Date());
 }
 
 export function getLegacyChallengeDayKeys(): string[] {

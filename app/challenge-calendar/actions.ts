@@ -2,13 +2,23 @@
 
 import "server-only";
 
-import { getAllChallengeDayKeys } from "@/app/lib/challenge-calendar-days";
+import {
+  ChallengeDefinition,
+  dayKeysFromStartKey,
+  sanitizeChallengeDefinition,
+} from "@/app/lib/challenge-calendar-days";
+import {
+  loadActiveChallengeFromRedis,
+  loadChallengeDefinitionsFromRedis,
+  saveActiveChallengeToRedis,
+  upsertChallengeDefinitionInRedis,
+  type ChallengeDefinitionsRegistry,
+} from "@/app/lib/challenge-active-remote";
 import {
   loadChallengeChecksFromRedis,
   saveChallengeChecksToRedis,
 } from "@/app/lib/challenge-checked-remote";
 import {
-  CHALLENGE_SEASON_ID,
   completionCount,
   loadChallengeCompletionsFromRedis,
   markChallengeSeasonCompleteInRedis,
@@ -17,8 +27,8 @@ import {
 } from "@/app/lib/challenge-completion-remote";
 import { createRedis } from "@/app/lib/redis-client";
 
-function sanitizeKeys(keys: string[]): string[] {
-  const allowed = new Set(getAllChallengeDayKeys());
+function sanitizeKeys(seasonId: string, keys: string[]): string[] {
+  const allowed = new Set(dayKeysFromStartKey(seasonId));
   const dayRe = /^\d{4}-\d{2}-\d{2}$/;
   const next = new Set<string>();
   for (const k of keys) {
@@ -29,7 +39,7 @@ function sanitizeKeys(keys: string[]): string[] {
 }
 
 /** États journées pour synchro téléphone ↔ ordinateur (Upstash Redis). */
-export async function fetchChallengeChecksFromCloud(): Promise<{
+export async function fetchChallengeChecksFromCloud(seasonId: string): Promise<{
   ok: boolean;
   keys: string[];
   cloudConfigured: boolean;
@@ -39,24 +49,25 @@ export async function fetchChallengeChecksFromCloud(): Promise<{
   }
 
   try {
-    const raw = await loadChallengeChecksFromRedis();
+    const raw = await loadChallengeChecksFromRedis(seasonId);
     if (raw === null) {
       return { ok: false, keys: [], cloudConfigured: true };
     }
-    return { ok: true, keys: sanitizeKeys(raw), cloudConfigured: true };
+    return { ok: true, keys: sanitizeKeys(seasonId, raw), cloudConfigured: true };
   } catch {
     return { ok: false, keys: [], cloudConfigured: true };
   }
 }
 
 export async function persistChallengeChecksToCloud(
+  seasonId: string,
   keys: string[],
 ): Promise<{ ok: boolean; stored: boolean }> {
   if (!createRedis()) {
     return { ok: false, stored: false };
   }
-  const clean = sanitizeKeys(keys);
-  const stored = await saveChallengeChecksToRedis(clean);
+  const clean = sanitizeKeys(seasonId, keys);
+  const stored = await saveChallengeChecksToRedis(seasonId, clean);
   return { ok: true, stored };
 }
 
@@ -86,8 +97,8 @@ export async function fetchChallengeCompletions(): Promise<{
   }
 }
 
-/** Enregistre la victoire de la saison en cours (idempotent). */
-export async function markCurrentChallengeSeasonComplete(): Promise<{
+/** Enregistre la victoire d’une saison (idempotent). */
+export async function markChallengeSeasonComplete(seasonId: string): Promise<{
   ok: boolean;
   count: number;
   stored: boolean;
@@ -97,7 +108,7 @@ export async function markCurrentChallengeSeasonComplete(): Promise<{
   }
 
   try {
-    const next = await markChallengeSeasonCompleteInRedis(CHALLENGE_SEASON_ID);
+    const next = await markChallengeSeasonCompleteInRedis(seasonId);
     if (!next) {
       return { ok: false, count: 0, stored: false };
     }
@@ -136,5 +147,56 @@ export async function mergeChallengeCompletionsFromClient(
     return { ok: true, count: merged.length, seasons: merged };
   } catch {
     return { ok: false, count: clean.length, seasons: clean };
+  }
+}
+
+/** Challenge actif stocké dans le cloud (titre + règles + date de départ). */
+export async function fetchActiveChallenge(): Promise<{
+  ok: boolean;
+  cloudConfigured: boolean;
+  challenge: ChallengeDefinition | null;
+}> {
+  if (!createRedis()) {
+    return { ok: true, cloudConfigured: false, challenge: null };
+  }
+  try {
+    const challenge = await loadActiveChallengeFromRedis();
+    return { ok: true, cloudConfigured: true, challenge };
+  } catch {
+    return { ok: false, cloudConfigured: true, challenge: null };
+  }
+}
+
+/** Définit le challenge actif et l’ajoute au registre des définitions. */
+export async function saveActiveChallengeToCloud(
+  raw: ChallengeDefinition,
+): Promise<{ ok: boolean; stored: boolean }> {
+  const def = sanitizeChallengeDefinition(raw);
+  if (!def) return { ok: false, stored: false };
+  if (!createRedis()) {
+    return { ok: false, stored: false };
+  }
+  try {
+    const stored = await saveActiveChallengeToRedis(def);
+    await upsertChallengeDefinitionInRedis(def);
+    return { ok: true, stored };
+  } catch {
+    return { ok: false, stored: false };
+  }
+}
+
+/** Registre des titres / règles par saison (pour l’historique). */
+export async function fetchChallengeDefinitions(): Promise<{
+  ok: boolean;
+  definitions: ChallengeDefinitionsRegistry;
+}> {
+  if (!createRedis()) {
+    return { ok: true, definitions: {} };
+  }
+  try {
+    const definitions = (await loadChallengeDefinitionsFromRedis()) ?? {};
+    return { ok: true, definitions };
+  } catch {
+    return { ok: false, definitions: {} };
   }
 }

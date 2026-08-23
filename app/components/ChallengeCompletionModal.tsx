@@ -3,30 +3,31 @@
 import Image from "next/image";
 import { useEffect, useRef } from "react";
 import {
+  ChallengeDefinitionMeta,
   completedSeasonsMeta,
+  DEFAULT_CHALLENGE_RULES,
+  DEFAULT_CHALLENGE_TITLE,
   TOTAL_DAYS,
 } from "@/app/lib/challenge-calendar-days";
-
-const CHALLENGE_TITLE = "Challenge Deepfocus & No Scroll";
-
-const RULES = [
-  "1 deep focus d’1 h tous les jours, sauf le samedi.",
-  "Pas de scroll avant 18 h.",
-  "Reprogrammation tous les matins avec le café.",
-];
 
 export function ChallengeCompletionModal({
   seasons,
   activeSeasonId,
+  definitions,
   onClose,
 }: {
   seasons: string[];
   activeSeasonId: string;
+  definitions: Record<string, ChallengeDefinitionMeta>;
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const metas = completedSeasonsMeta(seasons);
   const meta = metas.find((m) => m.id === activeSeasonId) ?? null;
+  const def = definitions[activeSeasonId];
+  const challengeTitle = def?.title || DEFAULT_CHALLENGE_TITLE;
+  const rules =
+    def?.rules && def.rules.length > 0 ? def.rules : DEFAULT_CHALLENGE_RULES;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -86,7 +87,7 @@ export function ChallengeCompletionModal({
               challenge gagné
             </p>
             <h2 className="font-orbitron bg-linear-to-r from-emerald-200 via-teal-200 to-cyan-200 bg-clip-text text-lg font-bold tracking-tight text-transparent sm:text-xl">
-              {CHALLENGE_TITLE}
+              {challengeTitle}
             </h2>
           </div>
         </div>
@@ -114,7 +115,7 @@ export function ChallengeCompletionModal({
               règles tenues
             </p>
             <ul className="mt-2 space-y-1.5">
-              {RULES.map((rule, i) => (
+              {rules.map((rule, i) => (
                 <li
                   key={i}
                   className="flex gap-2 text-xs leading-snug text-zinc-300"

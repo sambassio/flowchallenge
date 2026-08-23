@@ -5,28 +5,40 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CompletionTitleStar } from "@/app/components/CompletionTitleStar";
 import { ChallengeCompletionModal } from "@/app/components/ChallengeCompletionModal";
 import {
+  fetchActiveChallenge,
   fetchChallengeChecksFromCloud,
   fetchChallengeCompletions,
-  markCurrentChallengeSeasonComplete,
+  fetchChallengeDefinitions,
+  markChallengeSeasonComplete,
   mergeChallengeCompletionsFromClient,
   persistChallengeChecksToCloud,
+  saveActiveChallengeToCloud,
 } from "@/app/challenge-calendar/actions";
 import {
-  buildChallengeDates,
+  CHALLENGE_ACTIVE_LOCAL_KEY,
   CHALLENGE_COMPLETIONS_LOCAL_KEY,
-  CHALLENGE_LOCAL_STORAGE_KEY,
-  CHALLENGE_SEASON_ID,
+  CHALLENGE_DEFINITIONS_LOCAL_KEY,
+  ChallengeDefinition,
+  ChallengeDefinitionMeta,
+  challengeChecksLocalKey,
   completedSeasonsMeta,
+  datesFromStartKey,
+  dayKeysFromStartKey,
+  DEFAULT_CHALLENGE,
   formatChallengeDayKey,
-  getAllChallengeDayKeys,
   getLegacyChallengeDayKeys,
   LEGACY_CHALLENGE_LOCAL_STORAGE_KEY,
   LEGACY_CHALLENGE_SEASON_ID,
+  sanitizeChallengeDefinition,
+  todayChallengeKey,
   TOTAL_DAYS,
 } from "@/app/lib/challenge-calendar-days";
 import { triggerUltimateCompleteCelebration } from "@/app/lib/challengeCompleteCelebration";
 import { burstNeonConfetti } from "@/app/lib/neonConfetti";
 import { ChallengeVictoryOverlay } from "@/app/components/ChallengeVictoryOverlay";
+import { NextChallengePrompt } from "@/app/components/NextChallengePrompt";
+
+type DefinitionsRegistry = Record<string, ChallengeDefinitionMeta>;
 
 type CalendarSlot = { kind: "empty" } | { kind: "day"; date: Date };
 
@@ -41,10 +53,10 @@ function buildWeekGrid(days: Date[]): CalendarSlot[] {
   return out;
 }
 
-function loadCheckedLocal(): Set<string> {
+function loadCheckedLocal(seasonId: string): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const raw = window.localStorage.getItem(CHALLENGE_LOCAL_STORAGE_KEY);
+    const raw = window.localStorage.getItem(challengeChecksLocalKey(seasonId));
     if (!raw) return new Set();
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return new Set();
@@ -54,10 +66,58 @@ function loadCheckedLocal(): Set<string> {
   }
 }
 
-function saveCheckedLocal(next: Set<string>) {
+function saveCheckedLocal(seasonId: string, next: Set<string>) {
   window.localStorage.setItem(
-    CHALLENGE_LOCAL_STORAGE_KEY,
+    challengeChecksLocalKey(seasonId),
     JSON.stringify([...next]),
+  );
+}
+
+function loadActiveChallengeLocal(): ChallengeDefinition | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CHALLENGE_ACTIVE_LOCAL_KEY);
+    if (!raw) return null;
+    return sanitizeChallengeDefinition(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveChallengeLocal(def: ChallengeDefinition) {
+  window.localStorage.setItem(CHALLENGE_ACTIVE_LOCAL_KEY, JSON.stringify(def));
+}
+
+function loadDefinitionsLocal(): DefinitionsRegistry {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(CHALLENGE_DEFINITIONS_LOCAL_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: DefinitionsRegistry = {};
+    for (const [id, value] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
+      if (!value || typeof value !== "object") continue;
+      const v = value as Record<string, unknown>;
+      const title = typeof v.title === "string" ? v.title : "";
+      if (!title) continue;
+      const rules = Array.isArray(v.rules)
+        ? v.rules.filter((r): r is string => typeof r === "string")
+        : [];
+      out[id] = { title, rules };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveDefinitionsLocal(defs: DefinitionsRegistry) {
+  window.localStorage.setItem(
+    CHALLENGE_DEFINITIONS_LOCAL_KEY,
+    JSON.stringify(defs),
   );
 }
 
@@ -169,8 +229,17 @@ function StatBadge({
 }
 
 export function ChallengeCalendar() {
-  const days = useMemo(() => buildChallengeDates(), []);
-  const dayKeys = useMemo(() => getAllChallengeDayKeys(), []);
+  const [activeChallenge, setActiveChallenge] =
+    useState<ChallengeDefinition>(DEFAULT_CHALLENGE);
+  const seasonId = activeChallenge.id;
+  const days = useMemo(
+    () => datesFromStartKey(activeChallenge.id),
+    [activeChallenge.id],
+  );
+  const dayKeys = useMemo(
+    () => dayKeysFromStartKey(activeChallenge.id),
+    [activeChallenge.id],
+  );
   const weekGrid = useMemo(() => buildWeekGrid(days), [days]);
 
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
@@ -178,7 +247,9 @@ export function ChallengeCalendar() {
   const [victoryEpic, setVictoryEpic] = useState(false);
   const [completionCount, setCompletionCount] = useState(0);
   const [completionSeasons, setCompletionSeasons] = useState<string[]>([]);
+  const [definitions, setDefinitions] = useState<DefinitionsRegistry>({});
   const [activeSeasonId, setActiveSeasonId] = useState<string | null>(null);
+  const [promptDismissed, setPromptDismissed] = useState(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncEnabledRef = useRef(false);
   const epicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -187,7 +258,28 @@ export function ChallengeCalendar() {
     let cancelled = false;
 
     (async () => {
-      const local = loadCheckedLocal();
+      // 1. Résoudre le challenge actif (cloud prioritaire, secours local).
+      const localActive = loadActiveChallengeLocal();
+      const cloudActive = await fetchActiveChallenge();
+      if (cancelled) return;
+
+      const resolvedActive: ChallengeDefinition =
+        cloudActive.ok && cloudActive.challenge
+          ? cloudActive.challenge
+          : (localActive ?? DEFAULT_CHALLENGE);
+
+      // Amorcer le cloud avec le challenge résolu s’il est vide.
+      if (cloudActive.cloudConfigured && !cloudActive.challenge) {
+        void saveActiveChallengeToCloud(resolvedActive);
+      }
+      saveActiveChallengeLocal(resolvedActive);
+      setActiveChallenge(resolvedActive);
+
+      const activeId = resolvedActive.id;
+      const activeDayKeys = dayKeysFromStartKey(activeId);
+
+      // 2. Charger les cases + complétions + registre des définitions.
+      const local = loadCheckedLocal(activeId);
       const localSeasons = loadLocalCompletionSeasons();
       if (
         detectLegacyLocalCompletion() &&
@@ -196,11 +288,12 @@ export function ChallengeCalendar() {
         localSeasons.push(LEGACY_CHALLENGE_SEASON_ID);
       }
 
-      const [checksCloud, completionsMerged, completionsCloud] =
+      const [checksCloud, completionsMerged, completionsCloud, defsCloud] =
         await Promise.all([
-          fetchChallengeChecksFromCloud(),
+          fetchChallengeChecksFromCloud(activeId),
           mergeChallengeCompletionsFromClient(localSeasons),
           fetchChallengeCompletions(),
+          fetchChallengeDefinitions(),
         ]);
 
       if (cancelled) return;
@@ -208,7 +301,7 @@ export function ChallengeCalendar() {
       const { keys: remote, ok, cloudConfigured } = checksCloud;
       cloudSyncEnabledRef.current = cloudConfigured;
 
-      const allowed = new Set(dayKeys);
+      const allowed = new Set(activeDayKeys);
       const merged = new Set<string>();
       for (const k of local) {
         if (allowed.has(k)) merged.add(k);
@@ -220,10 +313,10 @@ export function ChallengeCalendar() {
       }
 
       setChecked(merged);
-      saveCheckedLocal(merged);
+      saveCheckedLocal(activeId, merged);
 
       if (cloudConfigured && ok) {
-        await persistChallengeChecksToCloud([...merged]);
+        await persistChallengeChecksToCloud(activeId, [...merged]);
       }
 
       const seasonsResolved =
@@ -241,67 +334,120 @@ export function ChallengeCalendar() {
       );
       setCompletionCount(count);
 
+      const localDefs = loadDefinitionsLocal();
+      const mergedDefs: DefinitionsRegistry = {
+        [DEFAULT_CHALLENGE.id]: {
+          title: DEFAULT_CHALLENGE.title,
+          rules: DEFAULT_CHALLENGE.rules,
+        },
+        ...localDefs,
+        ...(defsCloud.ok ? defsCloud.definitions : {}),
+        [resolvedActive.id]: {
+          title: resolvedActive.title,
+          rules: resolvedActive.rules,
+        },
+      };
+      saveDefinitionsLocal(mergedDefs);
+      setDefinitions(mergedDefs);
+
       setMounted(true);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [dayKeys]);
-
-  const scheduleCloudPersist = useCallback((next: Set<string>) => {
-    if (!cloudSyncEnabledRef.current) return;
-    if (persistTimerRef.current) {
-      clearTimeout(persistTimerRef.current);
-    }
-    persistTimerRef.current = setTimeout(() => {
-      persistTimerRef.current = null;
-      void persistChallengeChecksToCloud([...next]);
-    }, 550);
   }, []);
+
+  const scheduleCloudPersist = useCallback(
+    (next: Set<string>) => {
+      if (!cloudSyncEnabledRef.current) return;
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
+      persistTimerRef.current = setTimeout(() => {
+        persistTimerRef.current = null;
+        void persistChallengeChecksToCloud(seasonId, [...next]);
+      }, 550);
+    },
+    [seasonId],
+  );
 
   const toggle = useCallback(
     (key: string) => {
-      setChecked((prev) => {
-        const next = new Set(prev);
-        const wasOn = next.has(key);
-        if (wasOn) next.delete(key);
-        else next.add(key);
-        saveCheckedLocal(next);
-        scheduleCloudPersist(next);
+      const next = new Set(checked);
+      const wasOn = next.has(key);
+      if (wasOn) next.delete(key);
+      else next.add(key);
+      saveCheckedLocal(seasonId, next);
+      scheduleCloudPersist(next);
+      setChecked(next);
 
-        const justCompleted =
-          !wasOn && isChallengeFullyComplete(next, dayKeys);
-        if (justCompleted) {
-          setTimeout(() => {
-            triggerUltimateCompleteCelebration();
-            setVictoryEpic(true);
-            if (epicTimerRef.current) clearTimeout(epicTimerRef.current);
-            epicTimerRef.current = setTimeout(() => {
-              setVictoryEpic(false);
-              epicTimerRef.current = null;
-            }, 5200);
-          }, 0);
-          void markCurrentChallengeSeasonComplete().then((r) => {
-            if (r.ok) {
-              setCompletionCount(r.count);
-            }
-            const seasons = loadLocalCompletionSeasons();
-            if (!seasons.includes(CHALLENGE_SEASON_ID)) {
-              seasons.push(CHALLENGE_SEASON_ID);
-              saveLocalCompletionSeasons(seasons);
-            }
-            setCompletionSeasons(seasons);
-            if (!r.ok) setCompletionCount((c) => Math.max(c, seasons.length));
-          });
-        } else if (!isChallengeFullyComplete(next, dayKeys)) {
-          setVictoryEpic(false);
-        }
+      const justCompleted = !wasOn && isChallengeFullyComplete(next, dayKeys);
+      if (justCompleted) {
+        // Épique synchrone : évite un flash du prompt avant la célébration.
+        setVictoryEpic(true);
+        setTimeout(() => {
+          triggerUltimateCompleteCelebration();
+          if (epicTimerRef.current) clearTimeout(epicTimerRef.current);
+          epicTimerRef.current = setTimeout(() => {
+            setVictoryEpic(false);
+            epicTimerRef.current = null;
+          }, 5200);
+        }, 0);
+        void markChallengeSeasonComplete(seasonId).then((r) => {
+          if (r.ok) {
+            setCompletionCount(r.count);
+          }
+          const seasons = loadLocalCompletionSeasons();
+          if (!seasons.includes(seasonId)) {
+            seasons.push(seasonId);
+            saveLocalCompletionSeasons(seasons);
+          }
+          setCompletionSeasons(seasons);
+          if (!r.ok) setCompletionCount((c) => Math.max(c, seasons.length));
+        });
+      } else if (!isChallengeFullyComplete(next, dayKeys)) {
+        setVictoryEpic(false);
+      }
+    },
+    [checked, dayKeys, scheduleCloudPersist, seasonId],
+  );
 
+  const startNewChallenge = useCallback(
+    async (title: string, rules: string[]) => {
+      const startKey = todayChallengeKey();
+      const def: ChallengeDefinition = {
+        id: startKey,
+        title,
+        rules,
+        createdAt: new Date().toISOString(),
+      };
+
+      if (epicTimerRef.current) {
+        clearTimeout(epicTimerRef.current);
+        epicTimerRef.current = null;
+      }
+
+      const emptyChecks = new Set<string>();
+      saveActiveChallengeLocal(def);
+      saveCheckedLocal(startKey, emptyChecks);
+      setDefinitions((prev) => {
+        const next: DefinitionsRegistry = {
+          ...prev,
+          [def.id]: { title: def.title, rules: def.rules },
+        };
+        saveDefinitionsLocal(next);
         return next;
       });
+
+      setActiveChallenge(def);
+      setChecked(emptyChecks);
+      setVictoryEpic(false);
+      setPromptDismissed(false);
+
+      await saveActiveChallengeToCloud(def);
     },
-    [dayKeys, scheduleCloudPersist],
+    [],
   );
 
   useEffect(() => {
@@ -318,6 +464,8 @@ export function ChallengeCalendar() {
     percent === 0 ? 0 : Math.min(10, Math.ceil(percent / 10));
   const isComplete = mounted && isChallengeFullyComplete(checked, dayKeys);
   const showVictoryOverlay = isComplete;
+  const showNextPrompt =
+    isComplete && !victoryEpic && !promptDismissed;
   const wonSeasonsAsc = useMemo(
     () => [...completedSeasonsMeta(completionSeasons)].reverse(),
     [completionSeasons],
@@ -328,10 +476,17 @@ export function ChallengeCalendar() {
       {showVictoryOverlay ? (
         <ChallengeVictoryOverlay mode={victoryEpic ? "epic" : "ambient"} />
       ) : null}
+      {showNextPrompt ? (
+        <NextChallengePrompt
+          onStart={startNewChallenge}
+          onClose={() => setPromptDismissed(true)}
+        />
+      ) : null}
       {activeSeasonId ? (
         <ChallengeCompletionModal
           seasons={completionSeasons}
           activeSeasonId={activeSeasonId}
+          definitions={definitions}
           onClose={() => setActiveSeasonId(null)}
         />
       ) : null}
@@ -359,7 +514,7 @@ export function ChallengeCalendar() {
           <div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <h1 className="font-orbitron max-w-xl bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-balance text-xl font-bold leading-tight tracking-tight text-transparent sm:text-2xl md:text-3xl">
-                Challenge Deepfocus &amp; No Scroll
+                {activeChallenge.title}
               </h1>
               {mounted && wonSeasonsAsc.length > 0 ? (
                 <span className="inline-flex shrink-0 items-center gap-1.5">
@@ -391,7 +546,7 @@ export function ChallengeCalendar() {
               </time>
               <span className="text-zinc-600"> · {TOTAL_DAYS}d</span>
               <span className="block text-[10px] text-zinc-600">
-                nouvelle grille · départ le 20 · progression sync Redis
+                progression sync Redis
               </span>
             </p>
           </div>
@@ -584,50 +739,14 @@ export function ChallengeCalendar() {
                   règles
                 </p>
                 <ul className="mt-3 space-y-3 text-xs leading-snug text-zinc-400">
-                  <li className="flex gap-2">
-                    <span className="mt-1.5 shrink-0 font-orbitron text-[9px] text-cyan-500/90">
-                      01
-                    </span>
-                    <span>
-                      <span className="font-semibold text-zinc-200">
-                        1 deep focus d’1&nbsp;h
-                      </span>{" "}
-                      <span className="text-zinc-300">tous les jours</span>,
-                      sauf le{" "}
-                      <span className="font-medium text-fuchsia-300/90">
-                        samedi
+                  {activeChallenge.rules.map((rule, i) => (
+                    <li key={`${i}-${rule}`} className="flex gap-2">
+                      <span className="mt-1.5 shrink-0 font-orbitron text-[9px] tabular-nums text-cyan-500/90">
+                        {String(i + 1).padStart(2, "0")}
                       </span>
-                      .
-                    </span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="mt-1.5 shrink-0 font-orbitron text-[9px] text-cyan-500/90">
-                      02
-                    </span>
-                    <span>
-                      <span className="font-semibold text-zinc-200">
-                        Pas de scroll
-                      </span>{" "}
-                      avant{" "}
-                      <span className="tabular-nums text-cyan-200/95">
-                        18&nbsp;h
-                      </span>
-                      .
-                    </span>
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="mt-1.5 shrink-0 font-orbitron text-[9px] text-cyan-500/90">
-                      03
-                    </span>
-                    <span>
-                      <span className="font-semibold text-zinc-200">
-                        Faire la reprogrammation
-                      </span>{" "}
-                      <span className="text-zinc-300">
-                        tous les matins avec mon café.
-                      </span>
-                    </span>
-                  </li>
+                      <span className="text-zinc-300">{rule}</span>
+                    </li>
+                  ))}
                 </ul>
               </section>
 

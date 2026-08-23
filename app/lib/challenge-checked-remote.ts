@@ -1,21 +1,16 @@
-import {
-  CHALLENGE_SEASON_ID,
-  challengeChecksRedisKey,
-} from "@/app/lib/challenge-calendar-days";
+import { challengeChecksRedisKey } from "@/app/lib/challenge-calendar-days";
 import { createRedis } from "@/app/lib/redis-client";
 
 const TTL_SEC = 60 * 60 * 24 * 400;
 
-function checksKey(): string {
-  return challengeChecksRedisKey(CHALLENGE_SEASON_ID);
-}
-
-/** Charge les journées cochées depuis Redis (`null` si absent / erreur). */
-export async function loadChallengeChecksFromRedis(): Promise<string[] | null> {
+/** Charge les journées cochées d’une saison depuis Redis (`null` si absent / erreur). */
+export async function loadChallengeChecksFromRedis(
+  seasonId: string,
+): Promise<string[] | null> {
   const redis = createRedis();
   if (!redis) return null;
   try {
-    const raw: unknown = await redis.get(checksKey());
+    const raw: unknown = await redis.get(challengeChecksRedisKey(seasonId));
     if (raw == null) return [];
     if (typeof raw === "string") {
       const parsed = JSON.parse(raw) as unknown;
@@ -32,12 +27,15 @@ export async function loadChallengeChecksFromRedis(): Promise<string[] | null> {
 }
 
 export async function saveChallengeChecksToRedis(
+  seasonId: string,
   sortedUniqueKeys: string[],
 ): Promise<boolean> {
   const redis = createRedis();
   if (!redis) return false;
   try {
-    await redis.set(checksKey(), sortedUniqueKeys, { ex: TTL_SEC });
+    await redis.set(challengeChecksRedisKey(seasonId), sortedUniqueKeys, {
+      ex: TTL_SEC,
+    });
     return true;
   } catch {
     return false;
