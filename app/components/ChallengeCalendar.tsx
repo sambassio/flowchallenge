@@ -557,16 +557,6 @@ export function ChallengeCalendar() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {mounted && !isComplete ? (
-              <button
-                type="button"
-                onClick={() => setFailPromptOpen(true)}
-                aria-label="Rater le challenge et en commencer un nouveau"
-                className="rounded-full border border-rose-500/35 bg-rose-500/8 px-3 py-1.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-rose-200 transition-colors hover:border-rose-400/70 hover:text-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
-              >
-                failed
-              </button>
-            ) : null}
             <Link
               href="/reprogrammation"
               className="rounded-full border border-fuchsia-500/30 bg-fuchsia-500/8 px-3 py-1.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-fuchsia-200 transition-colors hover:border-cyan-400/50 hover:text-cyan-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"
@@ -576,6 +566,9 @@ export function ChallengeCalendar() {
             <span className="font-orbitron text-[10px] font-semibold uppercase tracking-[0.4em] text-cyan-400/75">
               online
             </span>
+            {mounted ? (
+              <HeaderOverflowMenu onFail={() => setFailPromptOpen(true)} />
+            ) : null}
           </div>
         </header>
 
@@ -775,6 +768,71 @@ export function ChallengeCalendar() {
           </aside>
         </div>
       </div>
+    </div>
+  );
+}
+
+function HeaderOverflowMenu({ onFail }: { onFail: () => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label="Menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={[
+          "grid size-8 place-items-center rounded-full border transition-colors",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400",
+          open
+            ? "border-cyan-400/50 bg-cyan-500/10 text-cyan-100"
+            : "border-zinc-700/70 bg-zinc-950/40 text-zinc-400 hover:border-zinc-500 hover:text-zinc-100",
+        ].join(" ")}
+      >
+        <span aria-hidden className="flex items-center gap-[3px]">
+          <span className="size-[3px] rounded-full bg-current" />
+          <span className="size-[3px] rounded-full bg-current" />
+          <span className="size-[3px] rounded-full bg-current" />
+        </span>
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Actions du challenge"
+          className="absolute right-0 top-full z-30 mt-2 min-w-44 overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/95 p-1 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.8)] backdrop-blur-md"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onFail();
+            }}
+            className="flex w-full items-center rounded-lg px-3 py-2.5 text-left font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-rose-300/90 transition-colors hover:bg-rose-500/12 hover:text-rose-100 focus-visible:bg-rose-500/12 focus-visible:outline-none"
+          >
+            failed
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
