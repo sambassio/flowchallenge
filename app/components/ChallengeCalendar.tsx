@@ -250,6 +250,7 @@ export function ChallengeCalendar() {
   const [definitions, setDefinitions] = useState<DefinitionsRegistry>({});
   const [activeSeasonId, setActiveSeasonId] = useState<string | null>(null);
   const [promptDismissed, setPromptDismissed] = useState(false);
+  const [failPromptOpen, setFailPromptOpen] = useState(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudSyncEnabledRef = useRef(false);
   const epicTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -444,6 +445,7 @@ export function ChallengeCalendar() {
       setChecked(emptyChecks);
       setVictoryEpic(false);
       setPromptDismissed(false);
+      setFailPromptOpen(false);
 
       await saveActiveChallengeToCloud(def);
     },
@@ -465,7 +467,7 @@ export function ChallengeCalendar() {
   const isComplete = mounted && isChallengeFullyComplete(checked, dayKeys);
   const showVictoryOverlay = isComplete;
   const showNextPrompt =
-    isComplete && !victoryEpic && !promptDismissed;
+    failPromptOpen || (isComplete && !victoryEpic && !promptDismissed);
   const wonSeasonsAsc = useMemo(
     () => [...completedSeasonsMeta(completionSeasons)].reverse(),
     [completionSeasons],
@@ -478,8 +480,12 @@ export function ChallengeCalendar() {
       ) : null}
       {showNextPrompt ? (
         <NextChallengePrompt
+          variant={failPromptOpen ? "failed" : "cleared"}
           onStart={startNewChallenge}
-          onClose={() => setPromptDismissed(true)}
+          onClose={() => {
+            if (failPromptOpen) setFailPromptOpen(false);
+            else setPromptDismissed(true);
+          }}
         />
       ) : null}
       {activeSeasonId ? (
@@ -551,6 +557,16 @@ export function ChallengeCalendar() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {mounted && !isComplete ? (
+              <button
+                type="button"
+                onClick={() => setFailPromptOpen(true)}
+                aria-label="Rater le challenge et en commencer un nouveau"
+                className="rounded-full border border-rose-500/35 bg-rose-500/8 px-3 py-1.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-rose-200 transition-colors hover:border-rose-400/70 hover:text-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+              >
+                failed
+              </button>
+            ) : null}
             <Link
               href="/reprogrammation"
               className="rounded-full border border-fuchsia-500/30 bg-fuchsia-500/8 px-3 py-1.5 font-orbitron text-[10px] font-semibold uppercase tracking-[0.28em] text-fuchsia-200 transition-colors hover:border-cyan-400/50 hover:text-cyan-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-400"

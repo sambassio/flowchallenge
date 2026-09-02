@@ -17,12 +17,15 @@ function todayLabel(): string {
 }
 
 export function NextChallengePrompt({
+  variant = "cleared",
   onStart,
   onClose,
 }: {
+  variant?: "cleared" | "failed";
   onStart: (title: string, rules: string[]) => void | Promise<void>;
   onClose: () => void;
 }) {
+  const failed = variant === "failed";
   const [title, setTitle] = useState("");
   const [rules, setRules] = useState<string[]>(["", "", ""]);
   const [submitting, setSubmitting] = useState(false);
@@ -77,7 +80,11 @@ export function NextChallengePrompt({
       className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6"
       role="dialog"
       aria-modal="true"
-      aria-label="Démarrer un nouveau challenge"
+      aria-label={
+        failed
+          ? "Challenge raté — démarrer un nouveau challenge"
+          : "Démarrer un nouveau challenge"
+      }
     >
       <div
         className="absolute inset-0 bg-black/75 backdrop-blur-sm"
@@ -87,7 +94,12 @@ export function NextChallengePrompt({
 
       <form
         onSubmit={handleSubmit}
-        className="relative z-10 max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-cyan-400/30 bg-zinc-950/90 p-5 shadow-[0_0_70px_-14px_rgba(34,211,238,0.5)] backdrop-blur-md sm:p-7"
+        className={[
+          "relative z-10 max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-zinc-950/90 p-5 backdrop-blur-md sm:p-7",
+          failed
+            ? "border border-rose-400/35 shadow-[0_0_70px_-14px_rgba(244,63,94,0.45)]"
+            : "border border-cyan-400/30 shadow-[0_0_70px_-14px_rgba(34,211,238,0.5)]",
+        ].join(" ")}
       >
         <button
           type="button"
@@ -100,15 +112,32 @@ export function NextChallengePrompt({
           </span>
         </button>
 
-        <p className="font-orbitron text-[9px] font-semibold uppercase tracking-[0.32em] text-cyan-400/85">
-          challenge cleared · next up
+        <p
+          className={[
+            "font-orbitron text-[9px] font-semibold uppercase tracking-[0.32em]",
+            failed ? "text-rose-400/90" : "text-cyan-400/85",
+          ].join(" ")}
+        >
+          {failed ? "challenge failed · next up" : "challenge cleared · next up"}
         </p>
-        <h2 className="font-orbitron mt-1 bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200 bg-clip-text text-xl font-bold tracking-tight text-transparent sm:text-2xl">
+        <h2
+          className={[
+            "font-orbitron mt-1 bg-clip-text text-xl font-bold tracking-tight text-transparent sm:text-2xl",
+            failed
+              ? "bg-linear-to-r from-rose-200 via-orange-200 to-amber-200"
+              : "bg-linear-to-r from-cyan-200 via-fuchsia-200 to-pink-200",
+          ].join(" ")}
+        >
           Nouveau challenge
         </h2>
         <p className="mt-2 font-mono text-[11px] text-zinc-500 tabular-nums">
           départ aujourd’hui · {todayLabel()} · {TOTAL_DAYS} jours
         </p>
+        {failed ? (
+          <p className="mt-2 text-xs leading-snug text-rose-200/70">
+            Pas d’étoile. Ce challenge est raté — tu repars de zéro.
+          </p>
+        ) : null}
 
         <div className="mt-6 space-y-2">
           <label
